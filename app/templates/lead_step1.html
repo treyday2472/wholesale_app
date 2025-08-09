@@ -32,21 +32,52 @@
     <div class="form-text">Address autocomplete enabled.</div>
   </div>
 
+  <!-- Hidden fields populated by Places API -->
+  {{ form.full_address() }}
+  {{ form.lat() }}
+  {{ form.lng() }}
+
   {{ form.submit(class="btn btn-primary") }}
 </form>
 
 <!-- Google Places Autocomplete -->
 <script>
-  // Replace with your real API key
-  const GOOGLE_PLACES_API_KEY = "PUT_YOUR_KEY_HERE";
+  // ⚠️ Strongly recommend restricting this key to your localhost referrers in Google Cloud.
+  const GOOGLE_PLACES_API_KEY = "AIzaSyDg2DddC04zDd2gJadBB_tKQCFH17rrVvU";
 
   function initAutocomplete() {
     const input = document.getElementById('autocomplete-address');
     if (!input) return;
+
+    // Prevent Enter from submitting before a place is selected
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') e.preventDefault(); });
+
     /* global google */
     const autocomplete = new google.maps.places.Autocomplete(input, {
       types: ['address'],
       componentRestrictions: { country: ["us"] }
+    });
+
+    // Only request what we need (quota-friendly)
+    if (autocomplete.setFields) {
+      autocomplete.setFields(['formatted_address','geometry','address_components']);
+    }
+
+    autocomplete.addListener('place_changed', () => {
+      const place = autocomplete.getPlace();
+      const full = document.querySelector('input[name="full_address"]');
+      const lat  = document.querySelector('input[name="lat"]');
+      const lng  = document.querySelector('input[name="lng"]');
+
+      if (!place || !place.geometry) {
+        // user typed but didn't pick a suggestion; still submit typed value
+        if (full) full.value = input.value;
+        return;
+      }
+
+      if (full) full.value = place.formatted_address || input.value;
+      if (lat)  lat.value  = place.geometry.location.lat();
+      if (lng)  lng.value  = place.geometry.location.lng();
     });
   }
 

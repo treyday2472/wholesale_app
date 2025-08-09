@@ -2,6 +2,7 @@ from flask_wtf import FlaskForm
 from wtforms import StringField, TextAreaField, SelectField, SubmitField, DateField
 from wtforms.validators import DataRequired, Optional, Email
 from wtforms.fields import MultipleFileField
+from wtforms import HiddenField
 
 REPAIR_CHOICES = [
     ("", "— Select —"),
@@ -25,6 +26,9 @@ class LeadStep1Form(FlaskForm):
 
     # This will be connected to Google Places Autocomplete
     address           = StringField("Property Address", validators=[DataRequired()])
+    full_address = HiddenField()
+    lat = HiddenField()
+    lng = HiddenField()
 
     submit = SubmitField("Continue")
 
