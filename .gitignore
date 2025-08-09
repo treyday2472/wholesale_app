@@ -5,4 +5,8 @@ instance/
 .env.*
 *.sqlite3
 *.db
+<<<<<<< HEAD
 venv/
+=======
+venv/
+>>>>>>> 99c8cb1ed71e2083b89809f91ba7d1349120a627
