@@ -1,9 +1,12 @@
 import os
 from flask import Blueprint, render_template, redirect, url_for, request, flash, current_app, session
 from werkzeug.utils import secure_filename
-from .forms import LeadStep1Form, LeadStep2Form, UpdateStatusForm  # keep UpdateStatusForm if you already added it
+from .forms import LeadStep1Form, LeadStep2Form, UpdateStatusForm, BuyerStep1Form, BuyerStep2Form # keep UpdateStatusForm if you already added it
 from .models import Lead
 from . import db
+from .models import Lead, Buyer
+
+
 
 
 main = Blueprint('main', __name__)
@@ -16,6 +19,8 @@ def allowed_file(filename):
 @main.route('/')
 def home():
     return redirect(url_for('main.leads_list'))
+
+
 
 # Step 1: vital contact info
 @main.route('/lead_new_step1', methods=['GET', 'POST'])
@@ -172,3 +177,81 @@ def delete_lead(lead_id):
 @main.route('/thank_you')
 def thank_you():
     return render_template('thank_you.html')
+
+# ---- BUYERS ----
+
+@main.route('/buyers/new/step1', methods=['GET','POST'])
+def buyer_new_step1():
+    form = BuyerStep1Form()
+    if form.validate_on_submit():
+        session['buyer_step1'] = {
+            'first_name': form.first_name.data.strip(),
+            'last_name':  form.last_name.data.strip() if form.last_name.data else '',
+            'email':      form.email.data.strip(),
+            'phone':      form.phone.data.strip(),
+            'city_focus': form.city_focus.data.strip(),
+        }
+        return redirect(url_for('main.buyer_new_step2'))
+    return render_template('buyer_step1.html', form=form)
+
+@main.route('/buyers/new/step2', methods=['GET','POST'])
+def buyer_new_step2():
+    step1 = session.get('buyer_step1')
+    if not step1:
+        flash("Please complete Step 1 first.", "warning")
+        return redirect(url_for('main.buyer_new_step1'))
+
+    form = BuyerStep2Form()
+    if form.validate_on_submit():
+        buyer = Buyer(
+            first_name=step1['first_name'],
+            last_name =step1['last_name'],
+            email=step1['email'],
+            phone=step1['phone'],
+            city_focus=step1['city_focus'],
+
+            zip_codes=(form.zip_codes.data or '').strip() or None,
+            property_types=(form.property_types.data or '').strip() or None,
+            max_repairs_level=form.max_repairs_level.data or None,
+            max_budget=(form.max_budget.data or '').strip() or None,
+            min_beds=(form.min_beds.data or '').strip() or None,
+            min_baths=(form.min_baths.data or '').strip() or None,
+            notes=form.notes.data or None,
+        )
+        db.session.add(buyer)
+        db.session.commit()
+        session.pop('buyer_step1', None)
+        flash("Buyer saved.", "success")
+        return redirect(url_for('main.buyer_detail', buyer_id=buyer.id))
+    return render_template('buyer_step2.html', form=form)
+
+@main.route('/buyers')
+def buyers_list():
+    q = request.args.get('q','').strip()
+    query = Buyer.query
+    if q:
+        like = f"%{q}%"
+        query = query.filter(
+            (Buyer.first_name.ilike(like)) |
+            (Buyer.last_name.ilike(like)) |
+            (Buyer.phone.ilike(like)) |
+            (Buyer.email.ilike(like)) |
+            (Buyer.city_focus.ilike(like)) |
+            (Buyer.zip_codes.ilike(like)) |
+            (Buyer.property_types.ilike(like))
+        )
+    buyers = query.order_by(Buyer.id.desc()).all()
+    return render_template('buyers_list.html', buyers=buyers, q=q)
+
+@main.route('/buyers/<int:buyer_id>')
+def buyer_detail(buyer_id):
+    buyer = Buyer.query.get_or_404(buyer_id)
+    return render_template('buyer_detail.html', buyer=buyer)
+
+@main.route('/buyers/<int:buyer_id>/delete', methods=['POST'])
+def delete_buyer(buyer_id):
+    buyer = Buyer.query.get_or_404(buyer_id)
+    db.session.delete(buyer)
+    db.session.commit()
+    flash("Buyer deleted.", "info")
+    return redirect(url_for('main.buyers_list'))

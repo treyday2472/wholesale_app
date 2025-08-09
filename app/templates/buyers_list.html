@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h2 class="mb-0">Buyers</h2>
+  <a class="btn btn-primary" href="{{ url_for('main.buyer_new_step1') }}">+ Add Buyer</a>
+</div>
+
+<form class="row g-2 mb-3" method="GET" action="{{ url_for('main.buyers_list') }}">
+  <div class="col-md-9">
+    <input name="q" class="form-control"
+           placeholder="Search name, phone, email, city, ZIPs, property types"
+           value="{{ q }}">
+  </div>
+  <div class="col-md-3">
+    <button class="btn btn-outline-light w-100" type="submit">Filter</button>
+  </div>
+</form>
+
+<table class="table table-dark table-striped align-middle">
+  <thead>
+    <tr>
+      <th style="width:70px;">ID</th>
+      <th>Name</th>
+      <th>Phone</th>
+      <th>Email</th>
+      <th>City Focus</th>
+      <th>ZIPs</th>
+      <th>Types</th>
+      <th style="width:210px;"></th>
+    </tr>
+  </thead>
+  <tbody>
+  {% if buyers %}
+    {% for b in buyers %}
+      <tr>
+        <td>#{{ b.id }}</td>
+        <td>{{ b.first_name }} {{ b.last_name or '' }}</td>
+        <td>{{ b.phone }}</td>
+        <td>{{ b.email }}</td>
+        <td>{{ b.city_focus or '' }}</td>
+        <td>{{ b.zip_codes or '' }}</td>
+        <td>{{ b.property_types or '' }}</td>
+        <td class="text-nowrap">
+          <a class="btn btn-sm btn-light me-2"
+             href="{{ url_for('main.buyer_detail', buyer_id=b.id) }}">Open</a>
+          <form method="POST"
+                action="{{ url_for('main.delete_buyer', buyer_id=b.id) }}"
+                style="display:inline"
+                onsubmit="return confirm('Delete buyer #{{ b.id }} — {{ b.first_name }} {{ b.last_name or "" }}?');">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn btn-sm btn-outline-danger">Delete</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+  {% else %}
+      <tr><td colspan="8" class="text-center">No buyers found.</td></tr>
+  {% endif %}
+  </tbody>
+</table>
+
+{% endblock %}

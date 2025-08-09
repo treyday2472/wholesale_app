@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Buyer — Step 2</h2>
+<form method="POST">
+  {{ form.hidden_tag() }}
+
+  <div class="mb-3">
+    {{ form.zip_codes.label(class="form-label") }}
+    {{ form.zip_codes(class="form-control", placeholder="e.g., 75201, 75204") }}
+  </div>
+
+  <div class="mb-3">
+    {{ form.property_types.label(class="form-label") }}
+    {{ form.property_types(class="form-control", placeholder="Single Family, Duplex, Condo") }}
+  </div>
+
+  <div class="row">
+    <div class="col-md-4 mb-3">
+      {{ form.max_repairs_level.label(class="form-label") }}
+      {{ form.max_repairs_level(class="form-select") }}
+    </div>
+    <div class="col-md-4 mb-3">
+      {{ form.max_budget.label(class="form-label") }}
+      {{ form.max_budget(class="form-control", placeholder="e.g., 300000") }}
+    </div>
+    <div class="col-md-2 mb-3">
+      {{ form.min_beds.label(class="form-label") }}
+      {{ form.min_beds(class="form-control") }}
+    </div>
+    <div class="col-md-2 mb-3">
+      {{ form.min_baths.label(class="form-label") }}
+      {{ form.min_baths(class="form-control") }}
+    </div>
+  </div>
+
+  <div class="mb-3">
+    {{ form.notes.label(class="form-label") }}
+    {{ form.notes(class="form-control", rows=3) }}
+  </div>
+
+  {{ form.submit(class="btn btn-primary") }}
+</form>
+{% endblock %}

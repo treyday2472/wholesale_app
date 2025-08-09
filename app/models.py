@@ -31,3 +31,22 @@ class Lead(db.Model):
 
     image_files       = db.Column(db.Text)
     lead_status       = db.Column(db.String(50), default="New Lead")
+
+class Buyer(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    first_name        = db.Column(db.String(60))
+    last_name         = db.Column(db.String(60))
+    phone             = db.Column(db.String(20))
+    email             = db.Column(db.String(100))
+    city_focus        = db.Column(db.String(100))     # step 1
+
+    # step 2 criteria
+    zip_codes         = db.Column(db.String(300))     # comma-separated
+    property_types    = db.Column(db.String(200))     # comma-separated (SFR, Duplex, etc.)
+    max_repairs_level = db.Column(db.String(30))      # light / medium / heavy
+    max_budget        = db.Column(db.String(50))      # e.g. 300k
+    min_beds          = db.Column(db.String(10))
+    min_baths         = db.Column(db.String(10))
+    notes             = db.Column(db.Text)
+
+    source            = db.Column(db.String(100), default="Web Form")

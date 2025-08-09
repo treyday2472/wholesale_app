@@ -84,3 +84,23 @@ class UpdateStatusForm(FlaskForm):
         ("Dead", "Dead")
     ])
     submit = SubmitField("Update Status")
+
+class BuyerStep1Form(FlaskForm):
+    first_name = StringField("First Name", validators=[DataRequired()])
+    last_name  = StringField("Last Name", validators=[Optional()])
+    email      = StringField("Email", validators=[Email(), DataRequired()])
+    phone      = StringField("Phone Number", validators=[DataRequired()])
+    city_focus = StringField("Primary City You Invest In", validators=[DataRequired()])
+    submit     = SubmitField("Continue")
+
+class BuyerStep2Form(FlaskForm):
+    zip_codes      = StringField("Target ZIP codes (comma-separated)", validators=[Optional()])
+    property_types = StringField("Property types (e.g., Single Family, Duplex)", validators=[Optional()])
+    max_repairs_level = SelectField("Repairs you’re willing to take on",
+                                    choices=[("", "— Select —"),("light","Light"),("medium","Medium"),("heavy","Heavy")],
+                                    validators=[Optional()])
+    max_budget     = StringField("Max purchase price ($)", validators=[Optional()])
+    min_beds       = StringField("Minimum bedrooms", validators=[Optional()])
+    min_baths      = StringField("Minimum bathrooms", validators=[Optional()])
+    notes          = TextAreaField("Notes", validators=[Optional()])
+    submit         = SubmitField("Submit")

@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Buyer #{{ buyer.id }} — {{ buyer.first_name }} {{ buyer.last_name or '' }}</h2>
+
+<div class="row">
+  <div class="col-md-8">
+    <div class="card bg-secondary mb-3">
+      <div class="card-body">
+        <p><strong>Phone:</strong> {{ buyer.phone }}</p>
+        <p><strong>Email:</strong> {{ buyer.email }}</p>
+        <p><strong>City Focus:</strong> {{ buyer.city_focus or '—' }}</p>
+        <p><strong>ZIP Codes:</strong> {{ buyer.zip_codes or '—' }}</p>
+        <p><strong>Property Types:</strong> {{ buyer.property_types or '—' }}</p>
+        <p><strong>Repairs Willing:</strong> {{ buyer.max_repairs_level or '—' }}</p>
+        <p><strong>Max Budget:</strong> {{ buyer.max_budget or '—' }}</p>
+        <p><strong>Min Beds:</strong> {{ buyer.min_beds or '—' }} | <strong>Min Baths:</strong> {{ buyer.min_baths or '—' }}</p>
+        <p><strong>Notes:</strong> {{ buyer.notes or '—' }}</p>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <form method="POST"
+          action="{{ url_for('main.delete_buyer', buyer_id=buyer.id) }}"
+          onsubmit="return confirm('Delete this buyer?');">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button class="btn btn-outline-danger w-100">Delete Buyer</button>
+    </form>
+  </div>
+</div>
+
+<a href="{{ url_for('main.buyers_list') }}" class="btn btn-link text-light">← Back to Buyers</a>
+{% endblock %}
