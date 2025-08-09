@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Step 1: Your Contact & Property Address</h2>
+<form method="POST">
+  {{ form.hidden_tag() }}
+
+  <div class="row">
+    <div class="col-md-6 mb-3">
+      {{ form.seller_first_name.label(class="form-label") }}
+      {{ form.seller_first_name(class="form-control", placeholder="First name") }}
+    </div>
+    <div class="col-md-6 mb-3">
+      {{ form.seller_last_name.label(class="form-label") }}
+      {{ form.seller_last_name(class="form-control", placeholder="Last name") }}
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="col-md-6 mb-3">
+      {{ form.email.label(class="form-label") }}
+      {{ form.email(class="form-control", placeholder="name@email.com") }}
+    </div>
+    <div class="col-md-6 mb-3">
+      {{ form.phone.label(class="form-label") }}
+      {{ form.phone(class="form-control", placeholder="(555) 555-5555") }}
+    </div>
+  </div>
+
+  <div class="mb-3">
+    {{ form.address.label(class="form-label") }}
+    {{ form.address(class="form-control", id="autocomplete-address", placeholder="Start typing your address") }}
+    <div class="form-text">Address autocomplete enabled.</div>
+  </div>
+
+  {{ form.submit(class="btn btn-primary") }}
+</form>
+
+<!-- Google Places Autocomplete -->
+<script>
+  // Replace with your real API key
+  const GOOGLE_PLACES_API_KEY = "PUT_YOUR_KEY_HERE";
+
+  function initAutocomplete() {
+    const input = document.getElementById('autocomplete-address');
+    if (!input) return;
+    /* global google */
+    const autocomplete = new google.maps.places.Autocomplete(input, {
+      types: ['address'],
+      componentRestrictions: { country: ["us"] }
+    });
+  }
+
+  const s = document.createElement('script');
+  s.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_PLACES_API_KEY}&libraries=places&callback=initAutocomplete`;
+  s.async = true;
+  s.defer = true;
+  document.body.appendChild(s);
+</script>
+{% endblock %}

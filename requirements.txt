@@ -1,0 +1,6 @@
+Flask
+Flask-WTF
+Flask-SQLAlchemy
+email_validator
+WTForms
+Flask-Migrate

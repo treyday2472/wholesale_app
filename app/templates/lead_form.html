@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Seller Lead Form</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="container mt-5">
+    <h2>Get a Cash Offer on Your Property</h2>
+    <form method="POST">
+        {{ form.hidden_tag() }}
+        {% for field in form if field.type != 'CSRFToken' %}
+            <div class="mb-3">
+                {{ field.label(class="form-label") }}
+                {{ field(class="form-control") }}
+                {% if field.errors %}
+                    <div class="text-danger">{{ field.errors[0] }}</div>
+                {% endif %}
+            </div>
+        {% endfor %}
+        <button type="submit" class="btn btn-primary">Submit</button>
+    </form>
+</body>
+</html>

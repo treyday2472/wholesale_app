@@ -1,0 +1,14 @@
+{% if images and images|length %}
+  <div class="card bg-secondary mb-3">
+    <div class="card-body">
+      <h5>Photos</h5>
+      <div class="row">
+        {% for fn in images %}
+          <div class="col-6 col-md-4 col-lg-3 mb-3">
+            <img src="{{ url_for('static', filename='uploads/' ~ fn) }}" class="img-fluid rounded" alt="photo">
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+{% endif %}

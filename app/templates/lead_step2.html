@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Step 2: Property Details</h2>
+<form method="POST" enctype="multipart/form-data">
+  {{ form.hidden_tag() }}
+
+  <div class="mb-3">
+    {{ form.occupancy_status.label(class="form-label") }}
+    {{ form.occupancy_status(class="form-select") }}
+  </div>
+
+  <div class="row">
+    <div class="col-md-4 mb-3">
+      {{ form.condition.label(class="form-label") }}
+      {{ form.condition(class="form-select") }}
+      {% if form.condition.errors %}<div class="text-warning">{{ form.condition.errors[0] }}</div>{% endif %}
+      <div class="form-text">Required</div>
+    </div>
+    <div class="col-md-4 mb-3">
+      {{ form.timeline.label(class="form-label") }}
+      {{ form.timeline(class="form-select") }}
+    </div>
+    <div class="col-md-4 mb-3">
+      {{ form.property_type.label(class="form-label") }}
+      {{ form.property_type(class="form-select") }}
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="col-md-6 mb-3">
+      {{ form.closing_date.label(class="form-label") }}
+      {{ form.closing_date(class="form-control", type="date") }}
+    </div>
+    <div class="col-md-6 mb-3">
+      {{ form.asking_price.label(class="form-label") }}
+      {{ form.asking_price(class="form-control", placeholder="Optional") }}
+    </div>
+  </div>
+
+  <div class="mb-3">
+    {{ form.reason.label(class="form-label") }}
+    {{ form.reason(class="form-control", rows=3, placeholder="Why are you looking to sell?") }}
+  </div>
+
+  <div class="mb-3">
+    <h5>Repairs (optional)</h5>
+    <div class="row">
+      <div class="col-md-4 mb-3">{{ form.ac_status.label(class="form-label") }} {{ form.ac_status(class="form-select") }}</div>
+      <div class="col-md-4 mb-3">{{ form.roof_status.label(class="form-label") }} {{ form.roof_status(class="form-select") }}</div>
+      <div class="col-md-4 mb-3">{{ form.foundation_status.label(class="form-label") }} {{ form.foundation_status(class="form-select") }}</div>
+      <div class="col-md-4 mb-3">{{ form.water_heater_status.label(class="form-label") }} {{ form.water_heater_status(class="form-select") }}</div>
+      <div class="col-md-4 mb-3">{{ form.electrical_status.label(class="form-label") }} {{ form.electrical_status(class="form-select") }}</div>
+      <div class="col-md-4 mb-3">{{ form.plumbing_status.label(class="form-label") }} {{ form.plumbing_status(class="form-select") }}</div>
+    </div>
+  </div>
+
+  <div class="mb-3">
+    {{ form.notes.label(class="form-label") }}
+    {{ form.notes(class="form-control", rows=3, placeholder="Anything else we should know?") }}
+  </div>
+
+  <div class="mb-3">
+    {{ form.photos.label(class="form-label") }}
+    {{ form.photos(class="form-control", multiple=True) }}
+    <div class="form-text">You can select multiple images (png, jpg, jpeg, webp).</div>
+  </div>
+
+  {{ form.submit(class="btn btn-primary") }}
+</form>
+{% endblock %}
