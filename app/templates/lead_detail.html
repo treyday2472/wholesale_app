@@ -1,14 +1,93 @@
-{% if images and images|length %}
-  <div class="card bg-secondary mb-3">
-    <div class="card-body">
-      <h5>Photos</h5>
-      <div class="row">
-        {% for fn in images %}
-          <div class="col-6 col-md-4 col-lg-3 mb-3">
-            <img src="{{ url_for('static', filename='uploads/' ~ fn) }}" class="img-fluid rounded" alt="photo">
+{% extends "base.html" %}
+{% block content %}
+
+<h2>Lead #{{ lead.id }} — {{ lead.seller_first_name }} {{ lead.seller_last_name or '' }}</h2>
+
+<div class="row">
+  <div class="col-md-8">
+    <div class="card bg-secondary mb-3">
+      <div class="card-body">
+        <div class="row">
+          <div class="col-md-6">
+            <p><strong>Phone:</strong> {{ lead.phone }}</p>
+            <p><strong>Email:</strong> {{ lead.email or '—' }}</p>
+            <p><strong>Address:</strong> {{ lead.address }}</p>
+            <p><strong>Lead Source:</strong> {{ lead.lead_source or '—' }}</p>
           </div>
-        {% endfor %}
+          <div class="col-md-6">
+            <p><strong>Occupancy:</strong> {{ lead.occupancy_status or '—' }}</p>
+            <p><strong>Closing Date:</strong> {{ lead.closing_date or '—' }}</p>
+            <p><strong>Overall Condition (1–10):</strong> {{ lead.condition }}</p>
+            <p><strong>Timeline:</strong> {{ lead.timeline or '—' }}</p>
+          </div>
+        </div>
+
+        <hr class="border-light">
+
+        <div class="row">
+          <div class="col-md-6">
+            <p><strong>Asking Price:</strong> {{ lead.asking_price or '—' }}</p>
+            <p><strong>Property Type:</strong> {{ lead.property_type or '—' }}</p>
+            <p><strong>Reason for Selling:</strong> {{ lead.reason or '—' }}</p>
+          </div>
+          <div class="col-md-6">
+            <p class="mb-1"><strong>Repairs (optional):</strong></p>
+            <ul class="mb-0">
+              <li><strong>AC:</strong> {{ lead.ac_status or '—' }}</li>
+              <li><strong>Roof:</strong> {{ lead.roof_status or '—' }}</li>
+              <li><strong>Foundation:</strong> {{ lead.foundation_status or '—' }}</li>
+              <li><strong>Water Heater:</strong> {{ lead.water_heater_status or '—' }}</li>
+              <li><strong>Electrical:</strong> {{ lead.electrical_status or '—' }}</li>
+              <li><strong>Plumbing:</strong> {{ lead.plumbing_status or '—' }}</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="mb-3">
+          <p><strong>Notes:</strong><br>{{ lead.notes or '—' }}</p>
+        </div>
+
+        {% if images and images|length %}
+        <div class="mt-3">
+          <h5>Photos</h5>
+          <div class="row">
+            {% for fn in images %}
+              <div class="col-6 col-md-4 col-lg-3 mb-3">
+                <img src="{{ url_for('static', filename='uploads/' ~ fn) }}"
+                     class="img-fluid rounded" alt="photo">
+              </div>
+            {% endfor %}
+          </div>
+        </div>
+        {% endif %}
       </div>
     </div>
   </div>
-{% endif %}
+
+  <div class="col-md-4">
+    <div class="card bg-secondary mb-3">
+      <div class="card-body">
+        <h5 class="mb-3">Status</h5>
+        <form method="POST">
+          {{ form.hidden_tag() }}
+          <div class="mb-3">
+            {{ form.lead_status.label(class="form-label") }}
+            {{ form.lead_status(class="form-select") }}
+          </div>
+          {{ form.submit(class="btn btn-light w-100") }}
+        </form>
+      </div>
+    </div>
+
+    <form method="POST"
+          action="{{ url_for('main.delete_lead', lead_id=lead.id) }}"
+          onsubmit="return confirm('Delete this lead?');">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button class="btn btn-outline-danger w-100">Delete Lead</button>
+    </form>
+  </div>
+</div>
+
+<a href="{{ url_for('main.leads_list') }}" class="btn btn-link text-light mt-3">← Back to Leads</a>
+
+{% endblock %}
