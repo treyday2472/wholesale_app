@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h2>Property #{{ prop.id }}</h2>
+
+<div class="row">
+  <div class="col-md-8">
+    <div class="card bg-secondary mb-3">
+      <div class="card-body">
+        <p><strong>Address:</strong> {{ prop.full_address or prop.address }}</p>
+        <p><strong>Beds/Baths:</strong> {{ prop.beds or '—' }}/{{ prop.baths or '—' }}</p>
+        <p><strong>SqFt:</strong> {{ prop.sqft or '—' }} | <strong>Lot:</strong> {{ prop.lot_size or '—' }}</p>
+        <p><strong>Year Built:</strong> {{ prop.year_built or '—' }}</p>
+        <p><strong>School District:</strong> {{ prop.school_district or '—' }}</p>
+        <p><strong>ARV Estimate:</strong> {{ prop.arv_estimate or '—' }}</p>
+      </div>
+    </div>
+
+    <div class="card bg-secondary mb-3">
+      <div class="card-body">
+        <h5 class="mb-3">Comps Used</h5>
+        {% if comps and comps|length %}
+          <div class="table-responsive">
+            <table class="table table-dark table-striped">
+              <thead>
+              <tr>
+                <th>Address</th>
+                <th>Distance (mi)</th>
+                <th>Beds</th>
+                <th>Baths</th>
+                <th>SqFt</th>
+                <th>Sold Price</th>
+                <th>Sold Date</th>
+              </tr>
+              </thead>
+              <tbody>
+              {% for c in comps %}
+                <tr>
+                  <td>{{ c.address }}</td>
+                  <td>{{ c.distance_mi }}</td>
+                  <td>{{ c.beds }}</td>
+                  <td>{{ c.baths }}</td>
+                  <td>{{ c.sqft }}</td>
+                  <td>{{ c.sold_price }}</td>
+                  <td>{{ c.sold_date }}</td>
+                </tr>
+              {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <p class="mb-0">No comps yet. Configure a data provider to enable auto-comps.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-4">
+      {% set has_map = (prop.lat and prop.lng and GOOGLE_MAPS_API_KEY) %}
+      {% if has_map %}
+        <div class="card bg-secondary mb-3">
+          <div class="card-body">
+            <h5>Map</h5>
+            <iframe
+              width="100%" height="260" style="border:0" loading="lazy" allowfullscreen
+              src="https://www.google.com/maps/embed/v1/place?key={{ GOOGLE_MAPS_API_KEY }}&q={{ prop.lat }},{{ prop.lng }}">
+            </iframe>
+          </div>
+        </div>
+      {% else %}
+        <div class="alert alert-dark">
+          Map unavailable. {% if not GOOGLE_MAPS_API_KEY %}Add <code>GOOGLE_MAPS_API_KEY</code>.{% elif not (prop.lat and prop.lng) %}Missing coordinates for this property.{% endif %}
+        </div>
+      {% endif %}
+
+    <form method="POST"
+          action="{{ url_for('main.delete_property', property_id=prop.id) }}"
+          onsubmit="return confirm('Delete this property?');">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button class="btn btn-outline-danger w-100">Delete Property</button>
+    </form>
+
+    <a href="{{ url_for('main.properties_list') }}" class="btn btn-link text-light mt-3 w-100">← Back to Properties</a>
+  </div>
+</div>
+
+{% endblock %}

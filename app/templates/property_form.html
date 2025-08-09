@@ -1,0 +1,142 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h2 class="mb-3">New Property</h2>
+
+<form method="POST">
+  {{ form.hidden_tag() }}
+
+  <div class="mb-3">
+    {{ form.address.label(class="form-label") }}
+    {{ form.address(class="form-control", id="autocomplete-address", placeholder="Start typing your address") }}
+    <div class="form-text">Address autocomplete enabled.</div>
+  </div>
+
+  {# Hidden fields (these should be WTForms HiddenFields in your form) #}
+  {{ form.full_address() }}
+  {{ form.lat() }}
+  {{ form.lng() }}
+
+  <div class="row">
+    <div class="col-md-6 mb-3">
+      {{ form.city.label(class="form-label") if form.city else "" }}
+      {{ form.city(class="form-control") if form.city else "" }}
+    </div>
+    <div class="col-md-6 mb-3">
+      {{ form.state.label(class="form-label") if form.state else "" }}
+      {{ form.state(class="form-control") if form.state else "" }}
+    </div>
+  </div>
+
+  {{ form.submit(class="btn btn-primary") }}
+</form>
+
+<script>
+  const KEY = "{{ GOOGLE_MAPS_API_KEY }}";
+
+  function mountPlaceAutocomplete(originalInput) {
+    // Create the web component right after the visible input
+    const host = document.createElement('gmpx-place-autocomplete');
+    host.setAttribute('placeholder', 'Start typing your address');
+    host.setAttribute('id', 'gmpx-autocomplete');
+    host.style.display = 'block';
+    host.style.width = '100%';
+
+    // Insert component AFTER the original input (keep original visible for now)
+    originalInput.insertAdjacentElement('afterend', host);
+
+    // When user picks a place, mirror to hidden fields + original input
+    host.addEventListener('gmpx-placechange', () => {
+      const place = host.value; // StructuredPlace
+      const full  = document.querySelector('input[name="full_address"]');
+      const lat   = document.querySelector('input[name="lat"]');
+      const lng   = document.querySelector('input[name="lng"]');
+
+      if (place && place.formattedAddress) {
+        if (full) full.value = place.formattedAddress;
+        originalInput.value = place.formattedAddress; // what server reads
+      }
+      if (place && place.location) {
+        if (lat) lat.value = place.location.lat();
+        if (lng) lng.value = place.location.lng();
+      }
+    });
+
+    // Only now hide the original input (after component exists)
+    originalInput.style.position = 'absolute';
+    originalInput.style.left = '-9999px';
+    originalInput.setAttribute('tabindex', '-1');
+  }
+
+  function mountLegacyAutocomplete(originalInput) {
+    /* global google */
+    const ac = new google.maps.places.Autocomplete(originalInput, {
+      types: ['address'],
+      componentRestrictions: { country: ['us'] }
+    });
+    if (ac.setFields) ac.setFields(['formatted_address','geometry']);
+
+    originalInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') e.preventDefault();
+    });
+
+    ac.addListener('place_changed', () => {
+      const place = ac.getPlace();
+      const full  = document.querySelector('input[name="full_address"]');
+      const lat   = document.querySelector('input[name="lat"]');
+      const lng   = document.querySelector('input[name="lng"]');
+
+      if (place && place.geometry) {
+        if (full) full.value = place.formatted_address || originalInput.value;
+        if (lat)  lat.value  = place.geometry.location.lat();
+        if (lng)  lng.value  = place.geometry.location.lng();
+      } else {
+        if (full) full.value = originalInput.value;
+      }
+    });
+  }
+
+  (function init() {
+    if (!KEY) {
+      console.warn('GOOGLE_MAPS_API_KEY missing; showing plain input.');
+      return; // leave the normal input visible
+    }
+
+    const originalInput = document.getElementById('autocomplete-address');
+    if (!originalInput) return;
+
+    // Load Maps JS (module) + Extended Components (module)
+    const mapsScript = document.createElement('script');
+    mapsScript.type = 'module';
+    mapsScript.src  = `https://maps.googleapis.com/maps/api/js?key=${KEY}&libraries=places`;
+
+    const compsScript = document.createElement('script');
+    compsScript.type = 'module';
+    compsScript.src  = 'https://unpkg.com/@googlemaps/extended-component-library@0.6/dist/index.min.js';
+
+    document.head.appendChild(mapsScript);
+    document.head.appendChild(compsScript);
+
+    // Try new component first (after it's defined), with a timeout fallback
+    let componentReady = false;
+
+    // When custom element is defined, mount it and hide the original input
+    if (window.customElements && customElements.whenDefined) {
+      customElements.whenDefined('gmpx-place-autocomplete').then(() => {
+        componentReady = true;
+        mountPlaceAutocomplete(originalInput);
+      });
+    }
+
+    // After 1500ms, if component didn't initialize, fallback to legacy Autocomplete
+    setTimeout(() => {
+      if (!componentReady && window.google && google.maps && google.maps.places) {
+        console.warn('Falling back to legacy google.maps.places.Autocomplete');
+        mountLegacyAutocomplete(originalInput);
+      }
+    }, 1500);
+  })();
+</script>
+
+
+{% endblock %}

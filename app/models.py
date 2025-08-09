@@ -1,4 +1,33 @@
 from . import db
+from datetime import datetime
+
+class Property(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+
+    # address
+    address        = db.Column(db.String(200))
+    full_address   = db.Column(db.String(300))
+    lat            = db.Column(db.Float)
+    lng            = db.Column(db.Float)
+
+    # reference ids / external
+    zpid           = db.Column(db.String(50))  # optional if you later resolve Zillow
+    source         = db.Column(db.String(50), default="manual_or_lead")
+
+    # facts
+    beds           = db.Column(db.Float)
+    baths          = db.Column(db.Float)
+    sqft           = db.Column(db.Integer)
+    lot_size       = db.Column(db.Integer)
+    year_built     = db.Column(db.String(10))
+    school_district = db.Column(db.String(120))
+
+    # valuation
+    arv_estimate   = db.Column(db.Integer)     # stored as whole dollars
+    comps_json     = db.Column(db.Text)        # JSON string of comps used
+    raw_json       = db.Column(db.Text)        # stash raw API responses if you want
+
+    created_at     = db.Column(db.DateTime, default=datetime.utcnow)
 
 class Lead(db.Model):
     id = db.Column(db.Integer, primary_key=True)

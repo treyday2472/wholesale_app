@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h2 class="mb-0">Properties</h2>
+  <div>
+    <a class="btn btn-outline-light me-2" href="{{ url_for('main.property_new') }}">+ Add Property</a>
+    <a class="btn btn-light me-2" href="{{ url_for('main.leads_list') }}">Leads</a>
+    <a class="btn btn-light" href="{{ url_for('main.buyers_list') }}">Buyers</a>
+  </div>
+</div>
+
+<form class="row g-2 mb-3" method="GET" action="{{ url_for('main.properties_list') }}">
+  <div class="col-md-9">
+    <input name="q" class="form-control"
+           placeholder="Search address, full address, school district"
+           value="{{ q }}">
+  </div>
+  <div class="col-md-3">
+    <button class="btn btn-outline-light w-100" type="submit">Filter</button>
+  </div>
+</form>
+
+<table class="table table-dark table-striped align-middle">
+  <thead>
+    <tr>
+      <th style="width:70px;">ID</th>
+      <th>Address</th>
+      <th>ARV</th>
+      <th>Beds/Baths</th>
+      <th>SqFt</th>
+      <th>School District</th>
+      <th style="width:210px;"></th>
+    </tr>
+  </thead>
+  <tbody>
+  {% if props %}
+    {% for p in props %}
+      <tr>
+        <td>#{{ p.id }}</td>
+        <td>{{ p.full_address or p.address }}</td>
+        <td>{{ p.arv_estimate if p.arv_estimate else "—" }}</td>
+        <td>{{ p.beds or "—" }}/{{ p.baths or "—" }}</td>
+        <td>{{ p.sqft or "—" }}</td>
+        <td>{{ p.school_district or "—" }}</td>
+        <td class="text-nowrap">
+          <a class="btn btn-sm btn-light me-2"
+             href="{{ url_for('main.property_detail', property_id=p.id) }}">Open</a>
+          <form method="POST"
+                action="{{ url_for('main.delete_property', property_id=p.id) }}"
+                style="display:inline"
+                onsubmit="return confirm('Delete property #{{ p.id }}?');">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn btn-sm btn-outline-danger">Delete</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+  {% else %}
+      <tr><td colspan="7" class="text-center">No properties found.</td></tr>
+  {% endif %}
+  </tbody>
+</table>
+
+{% endblock %}
+
+

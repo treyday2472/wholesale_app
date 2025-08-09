@@ -1,73 +1,71 @@
 import os
-from flask import Blueprint, render_template, redirect, url_for, request, flash, current_app, session
+import json
+from flask import (
+    Blueprint, render_template, redirect, url_for,
+    request, flash, current_app, session
+)
 from werkzeug.utils import secure_filename
-from .forms import LeadStep1Form, LeadStep2Form, UpdateStatusForm, BuyerStep1Form, BuyerStep2Form # keep UpdateStatusForm if you already added it
-from .models import Lead
+
 from . import db
-from .models import Lead, Buyer
-
-
-
+from .forms import (
+    LeadStep1Form, LeadStep2Form, UpdateStatusForm,
+    BuyerStep1Form, BuyerStep2Form, PropertyForm
+)
+from .models import Lead, Buyer, Property
+from .services.property_eval import evaluate_property
 
 main = Blueprint('main', __name__)
 
-def allowed_file(filename):
+def allowed_file(filename: str) -> bool:
     ext = (filename.rsplit('.', 1)[1].lower() if '.' in filename else '')
     return ext in current_app.config['ALLOWED_IMAGE_EXTENSIONS']
 
-# Make / the dashboard; tweak if you prefer
 @main.route('/')
 def home():
     return redirect(url_for('main.leads_list'))
 
+# ---------- LEADS ----------
 
-
-# Step 1: vital contact info
-@main.route('/lead_new_step1', methods=['GET', 'POST'])
+@main.route('/lead_step1', methods=['GET', 'POST'])
 def lead_new_step1():
     form = LeadStep1Form()
     if form.validate_on_submit():
-        # stash in session; we’ll commit after step2
         session['lead_step1'] = {
             'seller_first_name': form.seller_first_name.data.strip(),
-            'seller_last_name':  form.seller_last_name.data.strip() if form.seller_last_name.data else '',
+            'seller_last_name':  (form.seller_last_name.data or '').strip(),
             'email':             form.email.data.strip(),
             'phone':             form.phone.data.strip(),
-            'address': form.address.data.strip(),
-            'full_address': form.full_address.data or form.address.data.strip(),
-            'lat': form.lat.data or None,
-            'lng': form.lng.data or None,
+            'address':           form.address.data.strip(),
+            'full_address':      form.full_address.data or form.address.data.strip(),
+            'lat':               form.lat.data or None,
+            'lng':               form.lng.data or None,
         }
         return redirect(url_for('main.lead_new_step2'))
-    return render_template('lead_step1.html', form=form)
 
-# Step 2: details + photo upload
+    # 👇 pass key from config to template
+    return render_template(
+        'lead_step1.html',
+        form=form,
+        GOOGLE_MAPS_API_KEY=current_app.config.get('GOOGLE_MAPS_API_KEY', '')
+    )
+
 @main.route('/lead/new/step2', methods=['GET', 'POST'])
 def lead_new_step2():
-    # must have step1 data
     step1 = session.get('lead_step1')
     if not step1:
         flash("Please complete Step 1 first.", "warning")
-        return redirect(url_for('main.lead_new_step1'))
+        return redirect(url_for('main.lead_new_step1'))  # <- correct endpoint
 
     form = LeadStep2Form()
-
     if form.validate_on_submit():
-        # ---- handle photos ----
+        # photos
         saved_files = []
         upload_dir = current_app.config['UPLOAD_FOLDER']
         os.makedirs(upload_dir, exist_ok=True)
-
-        try:
-            files = request.files.getlist('photos')
-        except Exception:
-            files = []
-
-        for file in files:
+        for file in request.files.getlist('photos') or []:
             if file and file.filename:
                 if allowed_file(file.filename):
                     filename = secure_filename(file.filename)
-                    # avoid collisions
                     base, ext = os.path.splitext(filename)
                     final = filename
                     i = 1
@@ -79,58 +77,89 @@ def lead_new_step2():
                 else:
                     flash(f"Unsupported file type: {file.filename}", "warning")
 
-        # ---- create Lead ----
+        # create lead
         lead = Lead(
             seller_first_name=step1['seller_first_name'],
             seller_last_name= step1['seller_last_name'],
             email=step1['email'],
             phone=step1['phone'],
             address=step1['address'],
-
-            # NEW fields
             occupancy_status=form.occupancy_status.data or None,
             closing_date=(form.closing_date.data.isoformat() if form.closing_date.data else None),
-
-            # required + optional
             condition=form.condition.data,
             reason=form.reason.data,
             timeline=form.timeline.data,
             asking_price=form.asking_price.data,
             property_type=form.property_type.data,
             notes=form.notes.data,
-
-            # repairs (optional)
             ac_status=form.ac_status.data or None,
             roof_status=form.roof_status.data or None,
             foundation_status=form.foundation_status.data or None,
             water_heater_status=form.water_heater_status.data or None,
             electrical_status=form.electrical_status.data or None,
             plumbing_status=form.plumbing_status.data or None,
-
             image_files=",".join(saved_files) if saved_files else None,
             lead_source="Web Form",
         )
         db.session.add(lead)
         db.session.commit()
 
-        # clear multi-step cache
+        # auto-create property
+        full_address = step1.get('full_address') or lead.address
+        lat = step1.get('lat'); lng = step1.get('lng')
+        try:
+            lat = float(lat) if lat not in (None, "", "None") else None
+            lng = float(lng) if lng not in (None, "", "None") else None
+        except Exception:
+            lat = None; lng = None
+
+        prop = Property(
+            address=lead.address,
+            full_address=full_address,
+            lat=lat,
+            lng=lng,
+            source="from_lead",
+        )
+        db.session.add(prop)
+        db.session.commit()
+
+        # best-effort evaluation
+        google_key = current_app.config.get('GOOGLE_MAPS_API_KEY', '')
+        rapid_key  = current_app.config.get('RAPIDAPI_KEY', '')
+        try:
+            res = evaluate_property(prop.address, prop.full_address, prop.lat, prop.lng, google_key, rapid_key)
+            prop.lat = res.get("lat")
+            prop.lng = res.get("lng")
+            prop.full_address = res.get("full_address") or prop.full_address
+
+            facts = res.get("facts") or {}
+            prop.zpid = facts.get("zpid")
+            prop.beds = facts.get("beds")
+            prop.baths = facts.get("baths")
+            prop.sqft = facts.get("sqft")
+            prop.lot_size = facts.get("lot_size")
+            prop.year_built = facts.get("year_built")
+            prop.school_district = facts.get("school_district")
+
+            prop.arv_estimate = res.get("arv")
+            prop.comps_json = json.dumps(res.get("comps") or [])
+            prop.raw_json = json.dumps(facts.get("raw") or {})
+            db.session.commit()
+        except Exception as e:
+            current_app.logger.exception(f"Auto-evaluate property from lead failed: {e}")
+
         session.pop('lead_step1', None)
-
         flash("Thanks! Your information has been submitted.", "success")
-        return redirect(url_for('main.thank_you'))  # <-- go to thank-you page
+        return redirect(url_for('main.thank_you'))
 
-    # If POST but not valid, surface errors so you can see what's wrong
     if request.method == 'POST' and not form.validate():
-        # Log to console
         current_app.logger.error(f"Step2 validation errors: {form.errors}")
-        # Show a single flash with first errors per field
         for field_name, errs in form.errors.items():
             if errs:
                 flash(f"{field_name.replace('_',' ').title()}: {errs[0]}", "warning")
 
     return render_template('lead_step2.html', form=form)
 
-# Existing views (dashboard, detail, delete) — keep yours; shown here for completeness:
 @main.route('/leads')
 def leads_list():
     q = request.args.get('q', '').strip()
@@ -161,7 +190,6 @@ def lead_detail(lead_id):
         db.session.commit()
         flash("Lead status updated.", "success")
         return redirect(url_for('main.lead_detail', lead_id=lead.id))
-    # split images for display
     images = (lead.image_files.split(",") if lead.image_files else [])
     return render_template('lead_detail.html', lead=lead, form=form, images=images)
 
@@ -173,12 +201,11 @@ def delete_lead(lead_id):
     flash("Lead deleted.", "info")
     return redirect(url_for('main.leads_list'))
 
-
 @main.route('/thank_you')
 def thank_you():
     return render_template('thank_you.html')
 
-# ---- BUYERS ----
+# ---------- BUYERS ----------
 
 @main.route('/buyers/new/step1', methods=['GET','POST'])
 def buyer_new_step1():
@@ -186,7 +213,7 @@ def buyer_new_step1():
     if form.validate_on_submit():
         session['buyer_step1'] = {
             'first_name': form.first_name.data.strip(),
-            'last_name':  form.last_name.data.strip() if form.last_name.data else '',
+            'last_name':  (form.last_name.data or '').strip(),
             'email':      form.email.data.strip(),
             'phone':      form.phone.data.strip(),
             'city_focus': form.city_focus.data.strip(),
@@ -209,7 +236,6 @@ def buyer_new_step2():
             email=step1['email'],
             phone=step1['phone'],
             city_focus=step1['city_focus'],
-
             zip_codes=(form.zip_codes.data or '').strip() or None,
             property_types=(form.property_types.data or '').strip() or None,
             max_repairs_level=form.max_repairs_level.data or None,
@@ -255,3 +281,81 @@ def delete_buyer(buyer_id):
     db.session.commit()
     flash("Buyer deleted.", "info")
     return redirect(url_for('main.buyers_list'))
+
+# ---------- PROPERTIES ----------
+
+@main.route('/properties')
+def properties_list():
+    q = request.args.get('q','').strip()
+    query = Property.query
+    if q:
+        like = f"%{q}%"
+        query = query.filter(
+            (Property.address.ilike(like)) |
+            (Property.full_address.ilike(like)) |
+            (Property.school_district.ilike(like))
+        )
+    props = query.order_by(Property.id.desc()).all()
+    return render_template('properties_list.html', props=props, q=q)
+
+@main.route('/properties/new', methods=['GET','POST'])
+def property_new():
+    form = PropertyForm()
+    if form.validate_on_submit():
+        prop = Property(
+            address=form.address.data.strip(),
+            full_address=(form.full_address.data or form.address.data.strip()),
+            lat=(float(form.lat.data) if form.lat.data else None),
+            lng=(float(form.lng.data) if form.lng.data else None),
+            source="manual",
+        )
+        db.session.add(prop)
+        db.session.commit()
+
+        google_key = current_app.config.get('GOOGLE_MAPS_API_KEY', '')
+        rapid_key  = current_app.config.get('RAPIDAPI_KEY', '')
+        try:
+            res = evaluate_property(prop.address, prop.full_address, prop.lat, prop.lng, google_key, rapid_key)
+            prop.lat = res.get("lat"); prop.lng = res.get("lng"); prop.full_address = res.get("full_address") or prop.full_address
+            facts = res.get("facts") or {}
+            prop.zpid = facts.get("zpid")
+            prop.beds = facts.get("beds"); prop.baths = facts.get("baths")
+            prop.sqft = facts.get("sqft"); prop.lot_size = facts.get("lot_size")
+            prop.year_built = facts.get("year_built"); prop.school_district = facts.get("school_district")
+            prop.arv_estimate = res.get("arv")
+            prop.comps_json = json.dumps(res.get("comps") or [])
+            prop.raw_json = json.dumps(facts.get("raw") or {})
+            db.session.commit()
+        except Exception as e:
+            current_app.logger.exception(f"Property evaluation failed: {e}")
+            flash("Saved property, but auto-evaluation failed. Configure API keys and try again.", "warning")
+
+        return redirect(url_for('main.property_detail', property_id=prop.id))
+
+    return render_template(
+        'property_form.html',
+        form=form,
+        GOOGLE_MAPS_API_KEY=current_app.config.get('GOOGLE_MAPS_API_KEY', '')
+    )
+
+@main.route('/properties/<int:property_id>')
+def property_detail(property_id):
+    prop = Property.query.get_or_404(property_id)
+    try:
+        comps = json.loads(prop.comps_json) if prop.comps_json else []
+    except Exception:
+        comps = []
+    return render_template(
+        'property_detail.html',
+        prop=prop,
+        comps=comps,
+        GOOGLE_MAPS_API_KEY=current_app.config.get('GOOGLE_MAPS_API_KEY', '')
+    )
+
+@main.route('/properties/<int:property_id>/delete', methods=['POST'])
+def delete_property(property_id):
+    prop = Property.query.get_or_404(property_id)
+    db.session.delete(prop)
+    db.session.commit()
+    flash("Property deleted.", "info")
+    return redirect(url_for('main.properties_list'))

@@ -18,6 +18,13 @@ OCCUPANCY_CHOICES = [
     ("rented", "Rented out"),
 ]
 
+class PropertyForm(FlaskForm):
+    address      = StringField("Property Address", validators=[DataRequired()])
+    full_address = HiddenField()
+    lat          = HiddenField()
+    lng          = HiddenField()
+    submit       = SubmitField("Save & Evaluate")
+
 class LeadStep1Form(FlaskForm):
     seller_first_name = StringField("First Name", validators=[DataRequired()])
     seller_last_name  = StringField("Last Name", validators=[Optional()])

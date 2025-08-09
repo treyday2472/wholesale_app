@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h2 class="mb-3">Step 1: Your Contact & Property Address</h2>
+
+<form method="POST">
+  {{ form.hidden_tag() }}
+
+  <div class="row">
+    <div class="col-md-6 mb-3">
+      {{ form.seller_first_name.label(class="form-label") }}
+      {{ form.seller_first_name(class="form-control", placeholder="First name") }}
+    </div>
+    <div class="col-md-6 mb-3">
+      {{ form.seller_last_name.label(class="form-label") }}
+      {{ form.seller_last_name(class="form-control", placeholder="Last name") }}
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="col-md-6 mb-3">
+      {{ form.email.label(class="form-label") }}
+      {{ form.email(class="form-control", placeholder="name@email.com") }}
+    </div>
+    <div class="col-md-6 mb-3">
+      {{ form.phone.label(class="form-label") }}
+      {{ form.phone(class="form-control", placeholder="(555) 555-5555") }}
+    </div>
+  </div>
+
+  <div class="mb-3">
+    {{ form.address.label(class="form-label") }}
+    {{ form.address(class="form-control", id="autocomplete-address", placeholder="Start typing your address") }}
+    <div class="form-text">Address autocomplete enabled.</div>
+  </div>
+
+  {# Hidden fields to capture structured result #}
+  {{ form.full_address() }}
+  {{ form.lat() }}
+  {{ form.lng() }}
+
+  {{ form.submit(class="btn btn-primary") }}
+</form>
+
+<!-- Google Places (new PlaceAutocompleteElement) -->
+<script>
+  const KEY = "{{ GOOGLE_MAPS_API_KEY }}";
+
+  if (!KEY) {
+    console.warn("GOOGLE_MAPS_API_KEY is missing; Places Autocomplete will not load.");
+  } else {
+    // Load Maps JS (with Places library) as module
+    const mapsScript = document.createElement('script');
+    mapsScript.type = "module";
+    mapsScript.src  = `https://maps.googleapis.com/maps/api/js?key=${KEY}&libraries=places`;
+    document.head.appendChild(mapsScript);
+
+    // Load the Extended Components library (defines <gmpx-place-autocomplete>)
+    const compScript = document.createElement('script');
+    compScript.type = "module";
+    compScript.src  = "https://unpkg.com/@googlemaps/extended-component-library@0.6/dist/index.min.js";
+    document.head.appendChild(compScript);
+
+    window.addEventListener('load', () => {
+      const originalInput = document.getElementById('autocomplete-address');
+      if (!originalInput) return;
+
+      // Create the web component next to your existing input
+      const host = document.createElement('gmpx-place-autocomplete');
+      host.setAttribute('placeholder', 'Start typing your address');
+      host.setAttribute('id', 'gmpx-autocomplete');
+      host.style.display = 'block';
+
+      // Insert, then visually hide original input (but keep it in the form post)
+      originalInput.insertAdjacentElement('afterend', host);
+      originalInput.style.position = 'absolute';
+      originalInput.style.left = '-9999px';
+      originalInput.setAttribute('tabindex', '-1');
+
+      // Mirror selection into hidden fields + original input
+      host.addEventListener('gmpx-placechange', () => {
+        const place = host.value; // StructuredPlace
+        const full  = document.querySelector('input[name="full_address"]');
+        const lat   = document.querySelector('input[name="lat"]');
+        const lng   = document.querySelector('input[name="lng"]');
+
+        if (place && place.formattedAddress) {
+          if (full) full.value = place.formattedAddress;
+          originalInput.value = place.formattedAddress; // server reads this as address
+        }
+        if (place && place.location) {
+          if (lat) lat.value = place.location.lat();
+          if (lng) lng.value = place.location.lng();
+        }
+      });
+    });
+  }
+</script>
+
+{% endblock %}

@@ -5,6 +5,7 @@ instance/
 .env.*
 *.sqlite3
 *.db
+static/uploads/
 <<<<<<< HEAD
 venv/
 =======
