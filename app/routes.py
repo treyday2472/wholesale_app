@@ -5,6 +5,7 @@ from .forms import LeadStep1Form, LeadStep2Form, UpdateStatusForm  # keep Update
 from .models import Lead
 from . import db
 
+
 main = Blueprint('main', __name__)
 
 def allowed_file(filename):
@@ -27,7 +28,10 @@ def lead_new_step1():
             'seller_last_name':  form.seller_last_name.data.strip() if form.seller_last_name.data else '',
             'email':             form.email.data.strip(),
             'phone':             form.phone.data.strip(),
-            'address':           form.address.data.strip(),
+            'address': form.address.data.strip(),
+            'full_address': form.full_address.data or form.address.data.strip(),
+            'lat': form.lat.data or None,
+            'lng': form.lng.data or None,
         }
         return redirect(url_for('main.lead_new_step2'))
     return render_template('lead_step1.html', form=form)
@@ -42,21 +46,26 @@ def lead_new_step2():
         return redirect(url_for('main.lead_new_step1'))
 
     form = LeadStep2Form()
+
     if form.validate_on_submit():
-        # handle photos
+        # ---- handle photos ----
         saved_files = []
         upload_dir = current_app.config['UPLOAD_FOLDER']
         os.makedirs(upload_dir, exist_ok=True)
 
-        files = request.files.getlist('photos')
+        try:
+            files = request.files.getlist('photos')
+        except Exception:
+            files = []
+
         for file in files:
             if file and file.filename:
                 if allowed_file(file.filename):
                     filename = secure_filename(file.filename)
                     # avoid collisions
                     base, ext = os.path.splitext(filename)
-                    i = 1
                     final = filename
+                    i = 1
                     while os.path.exists(os.path.join(upload_dir, final)):
                         final = f"{base}_{i}{ext}"
                         i += 1
@@ -65,7 +74,7 @@ def lead_new_step2():
                 else:
                     flash(f"Unsupported file type: {file.filename}", "warning")
 
-        # Create Lead
+        # ---- create Lead ----
         lead = Lead(
             seller_first_name=step1['seller_first_name'],
             seller_last_name= step1['seller_last_name'],
@@ -77,7 +86,7 @@ def lead_new_step2():
             occupancy_status=form.occupancy_status.data or None,
             closing_date=(form.closing_date.data.isoformat() if form.closing_date.data else None),
 
-
+            # required + optional
             condition=form.condition.data,
             reason=form.reason.data,
             timeline=form.timeline.data,
@@ -85,7 +94,7 @@ def lead_new_step2():
             property_type=form.property_type.data,
             notes=form.notes.data,
 
-            # NEW repair statuses (all optional)
+            # repairs (optional)
             ac_status=form.ac_status.data or None,
             roof_status=form.roof_status.data or None,
             foundation_status=form.foundation_status.data or None,
@@ -94,7 +103,7 @@ def lead_new_step2():
             plumbing_status=form.plumbing_status.data or None,
 
             image_files=",".join(saved_files) if saved_files else None,
-            lead_source="Web Form"
+            lead_source="Web Form",
         )
         db.session.add(lead)
         db.session.commit()
@@ -102,8 +111,17 @@ def lead_new_step2():
         # clear multi-step cache
         session.pop('lead_step1', None)
 
-        flash("Lead created.", "success")
-        return redirect(url_for('main.lead_detail', lead_id=lead.id))
+        flash("Thanks! Your information has been submitted.", "success")
+        return redirect(url_for('main.thank_you'))  # <-- go to thank-you page
+
+    # If POST but not valid, surface errors so you can see what's wrong
+    if request.method == 'POST' and not form.validate():
+        # Log to console
+        current_app.logger.error(f"Step2 validation errors: {form.errors}")
+        # Show a single flash with first errors per field
+        for field_name, errs in form.errors.items():
+            if errs:
+                flash(f"{field_name.replace('_',' ').title()}: {errs[0]}", "warning")
 
     return render_template('lead_step2.html', form=form)
 
@@ -149,3 +167,8 @@ def delete_lead(lead_id):
     db.session.commit()
     flash("Lead deleted.", "info")
     return redirect(url_for('main.leads_list'))
+
+
+@main.route('/thank_you')
+def thank_you():
+    return render_template('thank_you.html')
