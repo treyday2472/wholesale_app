@@ -1,40 +1,51 @@
 {% extends "base.html" %}
 {% block content %}
-<h2 class="mb-3">Leads</h2>
 
-<form class="row g-2 mb-3">
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h2 class="mb-0">Leads</h2>
+  <a class="btn btn-primary" href="{{ url_for('main.lead_new_step1') }}">+ Add Lead</a>
+</div>
+
+<form class="row g-2 mb-3" method="GET" action="{{ url_for('main.leads_list') }}">
   <div class="col-md-6">
-    <input name="q" placeholder="Search name, phone, email, address, source" value="{{ q }}" class="form-control"/>
+    <input name="q"
+           class="form-control"
+           placeholder="Search name, phone, email, address, source"
+           value="{{ q }}">
   </div>
   <div class="col-md-3">
     <select name="status" class="form-select">
       {% for s in statuses %}
-        <option value="{{ s }}" {% if status==s %}selected{% endif %}>{{ s if s else "All statuses" }}</option>
+        <option value="{{ s }}"
+                {% if status==s %}selected{% endif %}>
+          {{ s if s else "All statuses" }}
+        </option>
       {% endfor %}
     </select>
   </div>
   <div class="col-md-3">
-    <button class="btn btn-primary w-100" type="submit">Filter</button>
+    <button class="btn btn-outline-light w-100" type="submit">Filter</button>
   </div>
 </form>
 
 <table class="table table-dark table-striped align-middle">
   <thead>
     <tr>
-      <th>ID</th>
+      <th style="width:70px;">ID</th>
       <th>Seller</th>
       <th>Phone</th>
       <th>Address</th>
-      <th>Status</th>
+      <th style="width:160px;">Status</th>
       <th>Source</th>
-      <th></th>
+      <th style="width:210px;"></th>
     </tr>
   </thead>
   <tbody>
+  {% if leads %}
     {% for lead in leads %}
       <tr>
-        <td>{{ lead.id }}</td>
-        <td>{{ lead.seller_name }}</td>
+        <td>#{{ lead.id }}</td>
+        <td>{{ lead.seller_first_name }} {{ lead.seller_last_name or '' }}</td>
         <td>{{ lead.phone }}</td>
         <td>{{ lead.address }}</td>
         <td>
@@ -43,18 +54,31 @@
             {% elif lead.lead_status=='Contacted' %}bg-primary
             {% elif lead.lead_status=='Appointment Set' %}bg-warning
             {% elif lead.lead_status=='Offer Made' %}bg-secondary
-            {% elif lead.lead_status=='Under Contract' %}bg-success
-            {% elif lead.lead_status=='Closed' %}bg-success
+            {% elif lead.lead_status in ['Under Contract','Closed'] %}bg-success
             {% else %}bg-danger{% endif %}">
             {{ lead.lead_status }}
           </span>
         </td>
         <td>{{ lead.lead_source or '' }}</td>
-        <td><a class="btn btn-sm btn-light" href="{{ url_for('main.lead_detail', lead_id=lead.id) }}">Open</a></td>
+        <td class="text-nowrap">
+          <a class="btn btn-sm btn-light me-2"
+             href="{{ url_for('main.lead_detail', lead_id=lead.id) }}">
+            Open
+          </a>
+          <form method="POST"
+                action="{{ url_for('main.delete_lead', lead_id=lead.id) }}"
+                style="display:inline"
+                onsubmit="return confirm('Delete lead #{{ lead.id }} — {{ lead.seller_first_name }} {{ lead.seller_last_name or "" }}?');">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn btn-sm btn-outline-danger">Delete</button>
+          </form>
+        </td>
       </tr>
-    {% else %}
-      <tr><td colspan="7" class="text-center">No leads found.</td></tr>
     {% endfor %}
+  {% else %}
+      <tr><td colspan="7" class="text-center">No leads found.</td></tr>
+  {% endif %}
   </tbody>
 </table>
+
 {% endblock %}
