@@ -74,6 +74,15 @@
       {% endif %}
 
     <form method="POST"
+          action="{{ url_for('main.property_refresh', property_id=prop.id) }}"
+          class="mb-3"
+          onsubmit="return confirm('Re-run evaluation for this property?');">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button class="btn btn-outline-info w-100">Refresh Evaluation</button>
+    </form>
+
+
+    <form method="POST"
           action="{{ url_for('main.delete_property', property_id=prop.id) }}"
           onsubmit="return confirm('Delete this property?');">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

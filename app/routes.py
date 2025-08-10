@@ -13,8 +13,46 @@ from .forms import (
 )
 from .models import Lead, Buyer, Property
 from .services.property_eval import evaluate_property
+from .services.zillow_client import evaluate_address_with_marketdata, ZillowError
 
 main = Blueprint('main', __name__)
+
+@main.route("/eval/address", methods=["GET", "POST"])
+def eval_address():
+    if request.method == "POST":
+        # read either typed address or the structured one from autocomplete
+        address = (request.form.get("full_address") or
+                   request.form.get("address") or "").strip()
+        lat = request.form.get("lat") or None
+        lng = request.form.get("lng") or None
+
+        if not address:
+            flash("Please enter an address.", "warning")
+            return redirect(url_for("main.eval_address"))
+
+        api_key = current_app.config.get("RAPIDAPI_KEY", "")
+        host    = current_app.config.get("ZILLOW_HOST", "zillow-com1.p.rapidapi.com")
+
+        try:
+            result = evaluate_address_with_marketdata(address, api_key, host)
+            return render_template(
+                "eval_result.html",
+                address=address,
+                result=result
+            )
+        except ZillowError as ze:
+            current_app.logger.exception("Zillow error")
+            flash(f"Zillow API error: {ze}", "danger")
+        except Exception as e:
+            current_app.logger.exception("Unexpected error")
+            flash(f"Unexpected error: {e}", "danger")
+        return redirect(url_for("main.eval_address"))
+
+    # GET — pass key for the JS component
+    return render_template(
+        "eval_form.html",
+        GOOGLE_MAPS_API_KEY=current_app.config.get("GOOGLE_MAPS_API_KEY", "")
+    )
 
 def allowed_file(filename: str) -> bool:
     ext = (filename.rsplit('.', 1)[1].lower() if '.' in filename else '')
@@ -123,11 +161,18 @@ def lead_new_step2():
         db.session.add(prop)
         db.session.commit()
 
-        # best-effort evaluation
+        # ---- attempt auto-evaluation (best-effort; won’t break the flow) ----
         google_key = current_app.config.get('GOOGLE_MAPS_API_KEY', '')
         rapid_key  = current_app.config.get('RAPIDAPI_KEY', '')
+        host       = current_app.config.get('ZILLOW_HOST', '')
+
         try:
-            res = evaluate_property(prop.address, prop.full_address, prop.lat, prop.lng, google_key, rapid_key)
+            res = evaluate_property(
+                prop.address, prop.full_address, prop.lat, prop.lng,
+                google_key, rapid_key, host
+            )
+
+            # save results
             prop.lat = res.get("lat")
             prop.lng = res.get("lng")
             prop.full_address = res.get("full_address") or prop.full_address
@@ -144,6 +189,7 @@ def lead_new_step2():
             prop.arv_estimate = res.get("arv")
             prop.comps_json = json.dumps(res.get("comps") or [])
             prop.raw_json = json.dumps(facts.get("raw") or {})
+
             db.session.commit()
         except Exception as e:
             current_app.logger.exception(f"Auto-evaluate property from lead failed: {e}")
@@ -159,6 +205,52 @@ def lead_new_step2():
                 flash(f"{field_name.replace('_',' ').title()}: {errs[0]}", "warning")
 
     return render_template('lead_step2.html', form=form)
+
+@main.route('/properties/<int:property_id>/refresh', methods=['POST'])
+def property_refresh(property_id):
+    prop = Property.query.get_or_404(property_id)
+
+    google_key = current_app.config.get('GOOGLE_MAPS_API_KEY', '')
+    rapid_key  = current_app.config.get('RAPIDAPI_KEY', '')
+    host       = current_app.config.get('ZILLOW_HOST', '')
+
+    try:
+        res = evaluate_property(
+            prop.address,
+            prop.full_address,
+            prop.lat,
+            prop.lng,
+            google_key,
+            rapid_key,
+            host
+        )
+
+        # Save results (best-effort)
+        prop.lat = res.get("lat")
+        prop.lng = res.get("lng")
+        prop.full_address = res.get("full_address") or prop.full_address
+
+        facts = res.get("facts") or {}
+        prop.zpid = facts.get("zpid")
+        prop.beds = facts.get("beds")
+        prop.baths = facts.get("baths")
+        prop.sqft = facts.get("sqft")
+        prop.lot_size = facts.get("lot_size")
+        prop.year_built = facts.get("year_built")
+        prop.school_district = facts.get("school_district")
+
+        prop.arv_estimate = res.get("arv")
+        prop.comps_json   = json.dumps(res.get("comps") or [])
+        prop.raw_json     = json.dumps(facts.get("raw") or {})
+
+        db.session.commit()
+        flash("Property re-evaluated.", "success")
+    except Exception as e:
+        current_app.logger.exception(f"Property re-eval failed: {e}")
+        flash("Re-evaluation failed. Check API keys and try again.", "warning")
+
+    return redirect(url_for('main.property_detail', property_id=prop.id))
+
 
 @main.route('/leads')
 def leads_list():
@@ -314,6 +406,7 @@ def property_new():
 
         google_key = current_app.config.get('GOOGLE_MAPS_API_KEY', '')
         rapid_key  = current_app.config.get('RAPIDAPI_KEY', '')
+        
         try:
             res = evaluate_property(prop.address, prop.full_address, prop.lat, prop.lng, google_key, rapid_key)
             prop.lat = res.get("lat"); prop.lng = res.get("lng"); prop.full_address = res.get("full_address") or prop.full_address

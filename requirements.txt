@@ -5,3 +5,4 @@ email_validator
 WTForms
 Flask-Migrate
 python-dotenv
+requests python-dateutil

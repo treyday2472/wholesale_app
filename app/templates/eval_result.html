@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block content %}
+<h2 class="mb-3">Evaluation for: {{ address }}</h2>
+
+{% if result.candidate %}
+<div class="card bg-secondary mb-3">
+  <div class="card-body">
+    <h5 class="mb-2">Matched Candidate</h5>
+    <pre class="mb-0 small">{{ result.candidate | tojson(indent=2) }}</pre>
+  </div>
+</div>
+{% else %}
+<div class="alert alert-warning">No candidate found. {{ result.note or '' }}</div>
+{% endif %}
+
+{% if result.market %}
+<div class="card bg-secondary mb-3">
+  <div class="card-body">
+    <h5 class="mb-2">Market Data</h5>
+    <pre class="mb-0 small">{{ result.market | tojson(indent=2) }}</pre>
+  </div>
+</div>
+{% endif %}
+
+{% if result.details %}
+<div class="card bg-secondary mb-3">
+  <div class="card-body">
+    <h5 class="mb-2">Property Details</h5>
+    <pre class="mb-0 small">{{ result.details | tojson(indent=2) }}</pre>
+  </div>
+</div>
+{% endif %}
+
+<a href="{{ url_for('main.eval_address') }}" class="btn btn-outline-light">Try another address</a>
+{% endblock %}

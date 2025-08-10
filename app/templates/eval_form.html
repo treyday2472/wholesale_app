@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h2 class="mb-3">Quick Evaluation</h2>
+
+<form method="POST">
+  <!-- CSRF -->
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+  <div class="mb-3">
+    <label class="form-label">Property Address</label>
+    <input
+      id="autocomplete-address"
+      name="address"
+      class="form-control"
+      placeholder="Start typing your address"
+      autocomplete="off"
+      required
+    >
+    <div class="form-text">Address autocomplete enabled.</div>
+  </div>
+
+  <!-- Hidden fields to capture structured result -->
+  <input type="hidden" name="full_address">
+  <input type="hidden" name="lat">
+  <input type="hidden" name="lng">
+
+  <button class="btn btn-primary">Evaluate</button>
+</form>
+
+<script>
+  const KEY = "{{ GOOGLE_MAPS_API_KEY }}";
+
+  function mountPlaceAutocomplete(originalInput) {
+    const host = document.createElement('gmpx-place-autocomplete');
+    host.id = 'gmpx-autocomplete';
+    host.placeholder = 'Start typing your address';
+    host.style.display = 'block';
+    host.style.width = '100%';
+
+    // Insert and then hide the original input (keep in DOM for form post)
+    originalInput.insertAdjacentElement('afterend', host);
+    originalInput.style.position = 'absolute';
+    originalInput.style.left = '-9999px';
+    originalInput.setAttribute('tabindex', '-1');
+
+    host.addEventListener('gmpx-placechange', () => {
+      const place = host.value; // StructuredPlace
+      const full  = document.querySelector('input[name="full_address"]');
+      const lat   = document.querySelector('input[name="lat"]');
+      const lng   = document.querySelector('input[name="lng"]');
+
+      if (place && place.formattedAddress) {
+        if (full) full.value = place.formattedAddress;
+        originalInput.value = place.formattedAddress; // server fallback
+      }
+      if (place && place.location) {
+        try {
+          if (lat) lat.value = place.location.lat();
+          if (lng) lng.value = place.location.lng();
+        } catch (_) {}
+      }
+    });
+  }
+
+  (function init() {
+    if (!KEY) {
+      console.warn('GOOGLE_MAPS_API_KEY missing; showing plain input.');
+      return;
+    }
+
+    const originalInput = document.getElementById('autocomplete-address');
+    if (!originalInput) return;
+
+    // Load Maps + Places (module build)
+    const mapsScript = document.createElement('script');
+    mapsScript.type = 'module';
+    mapsScript.src  = `https://maps.googleapis.com/maps/api/js?key=${KEY}&libraries=places`;
+
+    // Load the Extended Components library (provides <gmpx-place-autocomplete>)
+    const compsScript = document.createElement('script');
+    compsScript.type = 'module';
+    compsScript.src  = 'https://unpkg.com/@googlemaps/extended-component-library@0.6/dist/index.min.js';
+
+    // When the extended component library is actually loaded, mount the element.
+    compsScript.addEventListener('load', () => {
+      // Wait until the custom element class is registered, then mount.
+      if (window.customElements && customElements.whenDefined) {
+        customElements.whenDefined('gmpx-place-autocomplete')
+          .then(() => mountPlaceAutocomplete(originalInput))
+          .catch(err => console.warn('Failed to define component:', err));
+      } else {
+        // Older browsers: try mounting anyway.
+        mountPlaceAutocomplete(originalInput);
+      }
+    });
+
+    document.head.appendChild(mapsScript);
+    document.head.appendChild(compsScript);
+  })();
+</script>
+
+{% endblock %}
