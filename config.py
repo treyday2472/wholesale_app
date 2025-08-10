@@ -13,3 +13,11 @@ class Config:
 
     # Google keys pulled from env
     GOOGLE_MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "")
+    SECRET_KEY = os.getenv("SECRET_KEY", "dev")
+    GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY", "")
+    RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY", "")
+    ZILLOW_HOST = os.getenv("ZILLOW_HOST", "zillow-com1.p.rapidapi.com")
+
+
+
+

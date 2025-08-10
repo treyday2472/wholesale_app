@@ -13,19 +13,16 @@ from .forms import (
 )
 from .models import Lead, Buyer, Property
 from .services.property_eval import evaluate_property
-from .services.zillow_client import evaluate_address_with_marketdata, ZillowError
+from .services.zillow_client import evaluate_address_with_marketdata, ZillowError, search_address_for_zpid, property_details_by_zpid, normalize_details
 
 main = Blueprint('main', __name__)
 
 @main.route("/eval/address", methods=["GET", "POST"])
 def eval_address():
     if request.method == "POST":
-        # read either typed address or the structured one from autocomplete
-        address = (request.form.get("full_address") or
-                   request.form.get("address") or "").strip()
-        lat = request.form.get("lat") or None
-        lng = request.form.get("lng") or None
-
+        # take structured values if present, else the visible field
+        address = (request.form.get("full_address")
+                   or request.form.get("address") or "").strip()
         if not address:
             flash("Please enter an address.", "warning")
             return redirect(url_for("main.eval_address"))
@@ -35,20 +32,17 @@ def eval_address():
 
         try:
             result = evaluate_address_with_marketdata(address, api_key, host)
-            return render_template(
-                "eval_result.html",
-                address=address,
-                result=result
-            )
+            return render_template("eval_result.html", result=result)
         except ZillowError as ze:
             current_app.logger.exception("Zillow error")
             flash(f"Zillow API error: {ze}", "danger")
         except Exception as e:
-            current_app.logger.exception("Unexpected error")
+            current_app.logger.exception("Unexpected eval error")
             flash(f"Unexpected error: {e}", "danger")
+
         return redirect(url_for("main.eval_address"))
 
-    # GET — pass key for the JS component
+    # GET — pass Maps key so the eval_form autocomplete works
     return render_template(
         "eval_form.html",
         GOOGLE_MAPS_API_KEY=current_app.config.get("GOOGLE_MAPS_API_KEY", "")
@@ -169,7 +163,7 @@ def lead_new_step2():
         try:
             res = evaluate_property(
                 prop.address, prop.full_address, prop.lat, prop.lng,
-                google_key, rapid_key, host
+                google_key, rapid_key,
             )
 
             # save results
@@ -209,45 +203,53 @@ def lead_new_step2():
 @main.route('/properties/<int:property_id>/refresh', methods=['POST'])
 def property_refresh(property_id):
     prop = Property.query.get_or_404(property_id)
-
-    google_key = current_app.config.get('GOOGLE_MAPS_API_KEY', '')
-    rapid_key  = current_app.config.get('RAPIDAPI_KEY', '')
-    host       = current_app.config.get('ZILLOW_HOST', '')
+    addr = prop.full_address or prop.address
+    rapid_key = current_app.config.get('RAPIDAPI_KEY', '')
+    # host for details/search (can be same or different provider from marketData)
+    details_host = current_app.config.get('PROPERTY_HOST', current_app.config.get('ZILLOW_HOST', ''))
 
     try:
-        res = evaluate_property(
-            prop.address,
-            prop.full_address,
-            prop.lat,
-            prop.lng,
-            google_key,
-            rapid_key,
-            host
-        )
+        # 1) Ensure we have a zpid
+        zpid = prop.zpid
+        if not zpid:
+            addr = prop.full_address or prop.address
+            zpid = search_address_for_zpid(addr, rapid_key, details_host)
+            if zpid:
+                prop.zpid = zpid
 
-        # Save results (best-effort)
-        prop.lat = res.get("lat")
-        prop.lng = res.get("lng")
-        prop.full_address = res.get("full_address") or prop.full_address
+        # 2) If we have zpid, get details and map into DB
+        if zpid:
+            raw_details = property_details_by_zpid(zpid, rapid_key, details_host)
+            facts = normalize_details(raw_details)
 
-        facts = res.get("facts") or {}
-        prop.zpid = facts.get("zpid")
-        prop.beds = facts.get("beds")
-        prop.baths = facts.get("baths")
-        prop.sqft = facts.get("sqft")
-        prop.lot_size = facts.get("lot_size")
-        prop.year_built = facts.get("year_built")
-        prop.school_district = facts.get("school_district")
+            prop.full_address    = facts.get("fullAddress") or prop.full_address
+            prop.beds            = facts.get("bedrooms") or prop.beds
+            prop.baths           = facts.get("bathrooms") or prop.baths
+            prop.sqft            = facts.get("livingArea") or prop.sqft
+            prop.lot_size        = facts.get("lotSize") or prop.lot_size
+            prop.year_built      = facts.get("yearBuilt") or prop.year_built
+            prop.school_district = facts.get("schoolDistrict") or prop.school_district
 
-        prop.arv_estimate = res.get("arv")
-        prop.comps_json   = json.dumps(res.get("comps") or [])
-        prop.raw_json     = json.dumps(facts.get("raw") or {})
+            # optional: set lat/lng if missing
+            if not prop.lat and facts.get("lat"):   prop.lat  = facts["lat"]
+            if not prop.lng and facts.get("lng"):   prop.lng  = facts["lng"]
+
+            # keep raw for debugging
+            # (separate from your ZIP market raw_json if you like)
+            # prop.raw_json = json.dumps(raw_details)
+
+        # 3) Keep your ZIP market refresher if you want both views
+        # md = market_data_by_zip(...)  # you already wired this part
 
         db.session.commit()
         flash("Property re-evaluated.", "success")
+
+    except ZillowError as ze:
+        current_app.logger.exception("Zillow error during property refresh")
+        flash(f"Re-evaluation failed: {ze}", "warning")
     except Exception as e:
-        current_app.logger.exception(f"Property re-eval failed: {e}")
-        flash("Re-evaluation failed. Check API keys and try again.", "warning")
+        current_app.logger.exception("Property re-eval failed")
+        flash("Re-evaluation failed. Check API keys/paths and try again.", "warning")
 
     return redirect(url_for('main.property_detail', property_id=prop.id))
 
@@ -434,16 +436,29 @@ def property_new():
 @main.route('/properties/<int:property_id>')
 def property_detail(property_id):
     prop = Property.query.get_or_404(property_id)
+
+    comps = []
+    market = {}
     try:
-        comps = json.loads(prop.comps_json) if prop.comps_json else []
+        if prop.comps_json:
+            comps = json.loads(prop.comps_json)
     except Exception:
         comps = []
+
+    try:
+        if prop.raw_json:
+            market = json.loads(prop.raw_json)
+    except Exception:
+        market = {}
+
     return render_template(
         'property_detail.html',
         prop=prop,
         comps=comps,
+        market=market,  # <-- pass parsed dict
         GOOGLE_MAPS_API_KEY=current_app.config.get('GOOGLE_MAPS_API_KEY', '')
     )
+
 
 @main.route('/properties/<int:property_id>/delete', methods=['POST'])
 def delete_property(property_id):

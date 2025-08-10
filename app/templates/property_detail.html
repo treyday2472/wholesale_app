@@ -3,6 +3,11 @@
 
 <h2>Property #{{ prop.id }}</h2>
 
+{# Use the parsed dict from the route #}
+{% set md = market or {} %}
+{% set summary = md.get('summary', {}) %}
+{% set temp = (md.get('marketTemperature') or {}).get('temperature') %}
+
 <div class="row">
   <div class="col-md-8">
     <div class="card bg-secondary mb-3">
@@ -12,7 +17,15 @@
         <p><strong>SqFt:</strong> {{ prop.sqft or '—' }} | <strong>Lot:</strong> {{ prop.lot_size or '—' }}</p>
         <p><strong>Year Built:</strong> {{ prop.year_built or '—' }}</p>
         <p><strong>School District:</strong> {{ prop.school_district or '—' }}</p>
-        <p><strong>ARV Estimate:</strong> {{ prop.arv_estimate or '—' }}</p>
+        <p><strong>ARV Estimate (ZIP median rent):</strong> {{ prop.arv_estimate or '—' }}</p>
+
+        {# Optional: show a few market stats from raw JSON #}
+        <hr>
+        <h6 class="mb-2">ZIP Market Snapshot</h6>
+        <p class="mb-1"><strong>Median Rent:</strong> {{ summary.get('medianRent', '—') }}</p>
+        <p class="mb-1"><strong>Avg Days on Market:</strong> {{ summary.get('avgDaysOnMarket', '—') }}</p>
+        <p class="mb-1"><strong>Available Rentals:</strong> {{ summary.get('availableRentals', '—') }}</p>
+        <p class="mb-1"><strong>Temperature:</strong> {{ temp or '—' }}</p>
       </div>
     </div>
 
@@ -23,28 +36,28 @@
           <div class="table-responsive">
             <table class="table table-dark table-striped">
               <thead>
-              <tr>
-                <th>Address</th>
-                <th>Distance (mi)</th>
-                <th>Beds</th>
-                <th>Baths</th>
-                <th>SqFt</th>
-                <th>Sold Price</th>
-                <th>Sold Date</th>
-              </tr>
+                <tr>
+                  <th>Address</th>
+                  <th>Distance (mi)</th>
+                  <th>Beds</th>
+                  <th>Baths</th>
+                  <th>SqFt</th>
+                  <th>Sold Price</th>
+                  <th>Sold Date</th>
+                </tr>
               </thead>
               <tbody>
-              {% for c in comps %}
-                <tr>
-                  <td>{{ c.address }}</td>
-                  <td>{{ c.distance_mi }}</td>
-                  <td>{{ c.beds }}</td>
-                  <td>{{ c.baths }}</td>
-                  <td>{{ c.sqft }}</td>
-                  <td>{{ c.sold_price }}</td>
-                  <td>{{ c.sold_date }}</td>
-                </tr>
-              {% endfor %}
+                {% for c in comps %}
+                  <tr>
+                    <td>{{ c.address }}</td>
+                    <td>{{ c.distance_mi }}</td>
+                    <td>{{ c.beds }}</td>
+                    <td>{{ c.baths }}</td>
+                    <td>{{ c.sqft }}</td>
+                    <td>{{ c.sold_price }}</td>
+                    <td>{{ c.sold_date }}</td>
+                  </tr>
+                {% endfor %}
               </tbody>
             </table>
           </div>
@@ -56,31 +69,32 @@
   </div>
 
   <div class="col-md-4">
-      {% set has_map = (prop.lat and prop.lng and GOOGLE_MAPS_API_KEY) %}
-      {% if has_map %}
-        <div class="card bg-secondary mb-3">
-          <div class="card-body">
-            <h5>Map</h5>
-            <iframe
-              width="100%" height="260" style="border:0" loading="lazy" allowfullscreen
-              src="https://www.google.com/maps/embed/v1/place?key={{ GOOGLE_MAPS_API_KEY }}&q={{ prop.lat }},{{ prop.lng }}">
-            </iframe>
-          </div>
+    {% set has_map = (prop.lat and prop.lng and GOOGLE_MAPS_API_KEY) %}
+    {% if has_map %}
+      <div class="card bg-secondary mb-3">
+        <div class="card-body">
+          <h5>Map</h5>
+          <iframe
+            width="100%" height="260" style="border:0" loading="lazy" allowfullscreen
+            src="https://www.google.com/maps/embed/v1/place?key={{ GOOGLE_MAPS_API_KEY }}&q={{ prop.lat }},{{ prop.lng }}">
+          </iframe>
         </div>
-      {% else %}
-        <div class="alert alert-dark">
-          Map unavailable. {% if not GOOGLE_MAPS_API_KEY %}Add <code>GOOGLE_MAPS_API_KEY</code>.{% elif not (prop.lat and prop.lng) %}Missing coordinates for this property.{% endif %}
-        </div>
-      {% endif %}
+      </div>
+    {% else %}
+      <div class="alert alert-dark">
+        Map unavailable.
+        {% if not GOOGLE_MAPS_API_KEY %}Add <code>GOOGLE_MAPS_API_KEY</code>.
+        {% elif not (prop.lat and prop.lng) %}Missing coordinates for this property.{% endif %}
+      </div>
+    {% endif %}
 
     <form method="POST"
-          action="{{ url_for('main.property_refresh', property_id=prop.id) }}"
-          class="mb-3"
-          onsubmit="return confirm('Re-run evaluation for this property?');">
+          action="{{ url_for('main.property_refresh', property_id=prop.id) }}">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <button class="btn btn-outline-info w-100">Refresh Evaluation</button>
+      <button class="btn btn-outline-info w-100 mb-3">
+        Refresh Evaluation
+      </button>
     </form>
-
 
     <form method="POST"
           action="{{ url_for('main.delete_property', property_id=prop.id) }}"
