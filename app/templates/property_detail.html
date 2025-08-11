@@ -1,110 +1,248 @@
 {% extends "base.html" %}
+{% block title %}Property {{ prop.id }}{% endblock %}
+
 {% block content %}
+{% set snap = snapshot or {} %}
+{% set meta = snap.get('meta', {}) %}
+{% set details = snap.get('details', {}) %}
+{% set own = snap.get('1_ownership_mortgage', {}) %}
+{% set cls = snap.get('2_classification', {}) %}
+{% set valinc = snap.get('3_valuation_income', {}) %}
+{% set lotbld = snap.get('4_lot_building', {}) %}
+{% set loc = snap.get('5_location_desirability', {}) %}
+{% set marketab = snap.get('6_marketability', {}) %}
+{% set rehab = snap.get('7_rehab', {}) %}
+{% set exitf = snap.get('8_exit_flags', {}) %}
+{% set market = snap.get('market') %}
 
-<h2>Property #{{ prop.id }}</h2>
+{% set lat = details.get('lat') or prop.lat %}
+{% set lng = details.get('lng') or prop.lng %}
+{% set fulladdr = meta.get('fullAddress') or prop.full_address or ("Property " ~ prop.id) %}
 
-{# Use the parsed dict from the route #}
-{% set md = market or {} %}
-{% set summary = md.get('summary', {}) %}
-{% set temp = (md.get('marketTemperature') or {}).get('temperature') %}
+{# --- Try to find a Zillow image in raw payload; fallback to Street View --- #}
+{% set raw = details.get('raw', {}) %}
+{% set photos = raw.get('photos') or raw.get('images') or (raw.get('media', {}) if raw else {}).get('photos') or [] %}
+{% set first_photo = None %}
+{% if photos %}
+  {% if photos[0] is string %}
+    {% set first_photo = photos[0] %}
+  {% elif photos[0] is mapping %}
+    {% set first_photo = photos[0].get('url') 
+                          or photos[0].get('href')
+                          or (photos[0].get('mixedSources', {}) if photos[0] else {}).get('largest')
+                          or photos[0].get('urlXL') 
+                          or photos[0].get('urlLarge') 
+                          or photos[0].get('url') %}
+  {% endif %}
+{% endif %}
+{% if not first_photo %}
+  {% set first_photo = raw.get('imgSrc') or raw.get('primaryImageUrl') or raw.get('imageUrl') %}
+{% endif %}
 
-<div class="row">
-  <div class="col-md-8">
-    <div class="card bg-secondary mb-3">
-      <div class="card-body">
-        <p><strong>Address:</strong> {{ prop.full_address or prop.address }}</p>
-        <p><strong>Beds/Baths:</strong> {{ prop.beds or '—' }}/{{ prop.baths or '—' }}</p>
-        <p><strong>SqFt:</strong> {{ prop.sqft or '—' }} | <strong>Lot:</strong> {{ prop.lot_size or '—' }}</p>
-        <p><strong>Year Built:</strong> {{ prop.year_built or '—' }}</p>
-        <p><strong>School District:</strong> {{ prop.school_district or '—' }}</p>
-        <p><strong>ARV Estimate (ZIP median rent):</strong> {{ prop.arv_estimate or '—' }}</p>
-
-        {# Optional: show a few market stats from raw JSON #}
-        <hr>
-        <h6 class="mb-2">ZIP Market Snapshot</h6>
-        <p class="mb-1"><strong>Median Rent:</strong> {{ summary.get('medianRent', '—') }}</p>
-        <p class="mb-1"><strong>Avg Days on Market:</strong> {{ summary.get('avgDaysOnMarket', '—') }}</p>
-        <p class="mb-1"><strong>Available Rentals:</strong> {{ summary.get('availableRentals', '—') }}</p>
-        <p class="mb-1"><strong>Temperature:</strong> {{ temp or '—' }}</p>
-      </div>
-    </div>
-
-    <div class="card bg-secondary mb-3">
-      <div class="card-body">
-        <h5 class="mb-3">Comps Used</h5>
-        {% if comps and comps|length %}
-          <div class="table-responsive">
-            <table class="table table-dark table-striped">
-              <thead>
-                <tr>
-                  <th>Address</th>
-                  <th>Distance (mi)</th>
-                  <th>Beds</th>
-                  <th>Baths</th>
-                  <th>SqFt</th>
-                  <th>Sold Price</th>
-                  <th>Sold Date</th>
-                </tr>
-              </thead>
-              <tbody>
-                {% for c in comps %}
-                  <tr>
-                    <td>{{ c.address }}</td>
-                    <td>{{ c.distance_mi }}</td>
-                    <td>{{ c.beds }}</td>
-                    <td>{{ c.baths }}</td>
-                    <td>{{ c.sqft }}</td>
-                    <td>{{ c.sold_price }}</td>
-                    <td>{{ c.sold_date }}</td>
-                  </tr>
-                {% endfor %}
-              </tbody>
-            </table>
-          </div>
-        {% else %}
-          <p class="mb-0">No comps yet. Configure a data provider to enable auto-comps.</p>
-        {% endif %}
-      </div>
-    </div>
+<div class="container my-4">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h2 class="mb-0">{{ fulladdr }}</h2>
+    <a class="btn btn-sm btn-primary" href="{{ url_for('main.property_refresh', property_id=prop.id) }}">Refresh</a>
   </div>
 
-  <div class="col-md-4">
-    {% set has_map = (prop.lat and prop.lng and GOOGLE_MAPS_API_KEY) %}
-    {% if has_map %}
-      <div class="card bg-secondary mb-3">
-        <div class="card-body">
-          <h5>Map</h5>
-          <iframe
-            width="100%" height="260" style="border:0" loading="lazy" allowfullscreen
-            src="https://www.google.com/maps/embed/v1/place?key={{ GOOGLE_MAPS_API_KEY }}&q={{ prop.lat }},{{ prop.lng }}">
-          </iframe>
+  <!-- Hero: Photo + Map -->
+  <div class="row mb-3">
+    <div class="col-lg-7 mb-3 mb-lg-0">
+      <div class="card h-100">
+        <div class="card-header">Property Photo</div>
+        <div class="card-body p-0">
+          {% if first_photo %}
+            <img src="{{ first_photo }}" alt="Property Photo" class="img-fluid w-100" style="object-fit:cover; max-height:420px;">
+          {% elif GOOGLE_MAPS_API_KEY and lat and lng %}
+            <img
+              src="https://maps.googleapis.com/maps/api/streetview?size=1200x420&location={{ lat }},{{ lng }}&key={{ GOOGLE_MAPS_API_KEY }}"
+              alt="Street View"
+              class="img-fluid w-100"
+              style="object-fit:cover; max-height:420px;">
+          {% else %}
+            <div class="p-4 text-muted">No photo available.</div>
+          {% endif %}
         </div>
       </div>
-    {% else %}
-      <div class="alert alert-dark">
-        Map unavailable.
-        {% if not GOOGLE_MAPS_API_KEY %}Add <code>GOOGLE_MAPS_API_KEY</code>.
-        {% elif not (prop.lat and prop.lng) %}Missing coordinates for this property.{% endif %}
+    </div>
+    <div class="col-lg-5">
+      <div class="card h-100">
+        <div class="card-header">Map</div>
+        <div class="card-body p-0">
+          {% if GOOGLE_MAPS_API_KEY and lat and lng %}
+            <iframe
+              width="100%" height="420" frameborder="0" style="border:0"
+              src="https://www.google.com/maps/embed/v1/view?key={{ GOOGLE_MAPS_API_KEY }}&center={{ lat }},{{ lng }}&zoom=16&maptype=roadmap"
+              allowfullscreen>
+            </iframe>
+          {% elif GOOGLE_MAPS_API_KEY %}
+            <iframe
+              width="100%" height="420" frameborder="0" style="border:0"
+              src="https://www.google.com/maps/embed/v1/place?key={{ GOOGLE_MAPS_API_KEY }}&q={{ (fulladdr | replace(' ', '+')) }}"
+              allowfullscreen>
+            </iframe>
+          {% else %}
+            <div class="p-4 text-muted">Map unavailable (missing Google Maps API key).</div>
+          {% endif %}
+        </div>
       </div>
-    {% endif %}
-
-    <form method="POST"
-          action="{{ url_for('main.property_refresh', property_id=prop.id) }}">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <button class="btn btn-outline-info w-100 mb-3">
-        Refresh Evaluation
-      </button>
-    </form>
-
-    <form method="POST"
-          action="{{ url_for('main.delete_property', property_id=prop.id) }}"
-          onsubmit="return confirm('Delete this property?');">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <button class="btn btn-outline-danger w-100">Delete Property</button>
-    </form>
-
-    <a href="{{ url_for('main.properties_list') }}" class="btn btn-link text-light mt-3 w-100">← Back to Properties</a>
+    </div>
   </div>
-</div>
 
+  <!-- Core facts -->
+  <div class="card mb-3">
+    <div class="card-header">Core Facts</div>
+    <div class="card-body">
+      <div class="row">
+        <div class="col-md-3"><strong>ZPID:</strong> {{ meta.get('zpid') or prop.zpid or "—" }}</div>
+        <div class="col-md-3"><strong>Beds:</strong> {{ details.get('bedrooms') or prop.beds or "—" }}</div>
+        <div class="col-md-3"><strong>Baths:</strong> {{ details.get('bathrooms') or prop.baths or "—" }}</div>
+        <div class="col-md-3"><strong>Sq Ft:</strong> {{ details.get('livingArea') or prop.sqft or "—" }}</div>
+      </div>
+      <div class="row mt-2">
+        <div class="col-md-3"><strong>Lot Size:</strong> {{ details.get('lotSize') or prop.lot_size or "—" }}</div>
+        <div class="col-md-3"><strong>Year Built:</strong> {{ details.get('yearBuilt') or prop.year_built or "—" }}</div>
+        <div class="col-md-3"><strong>Lat/Lng:</strong> {{ lat or "—" }}, {{ lng or "—" }}</div>
+        <div class="col-md-3"><strong>School District:</strong> {{ details.get('schoolDistrict') or prop.school_district or "—" }}</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 1) Ownership & Mortgage -->
+  <div class="card mb-3">
+    <div class="card-header">1) Ownership & Mortgage</div>
+    <div class="card-body">
+      <div class="row">
+        <div class="col-md-3"><strong>Last Sold Price:</strong> {{ own.get('lastSoldPrice') | currency }}</div>
+        <div class="col-md-3"><strong>Last Sold Date:</strong> {{ own.get('lastSoldDate') or "—" }}</div>
+        <div class="col-md-3"><strong>Purchase Method:</strong> {{ own.get('purchaseMethod') or "—" }}</div>
+        <div class="col-md-3"><strong>Owner Occupied:</strong> {{ own.get('ownerOccupied') if own else "—" }}</div>
+      </div>
+      <div class="row mt-2">
+        <div class="col-md-3"><strong>Mortgage Amount:</strong> {{ own.get('mortgageAmount') or "—" }}</div>
+        <div class="col-md-3"><strong>Mortgage Type:</strong> {{ own.get('mortgageType') or "—" }}</div>
+        <div class="col-md-3"><strong>Lender:</strong> {{ own.get('lender') or "—" }}</div>
+        <div class="col-md-3"><strong>Origination Date:</strong> {{ own.get('mortgageOriginationDate') or "—" }}</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2) Property Classification -->
+  <div class="card mb-3">
+    <div class="card-header">2) Property Classification</div>
+    <div class="card-body">
+      <div class="row">
+        <div class="col-md-4"><strong>Raw Type:</strong> {{ cls.get('propertyTypeRaw') or "—" }}</div>
+        <div class="col-md-4"><strong>Classification:</strong> {{ cls.get('classification') or "—" }}</div>
+        <div class="col-md-4"><strong>Unit Count:</strong> {{ cls.get('unitCount') or "—" }}</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3) Valuation & Income -->
+  <div class="card mb-3">
+    <div class="card-header">3) Valuation & Income</div>
+    <div class="card-body">
+      <div class="row">
+        <div class="col-md-3"><strong>Zestimate:</strong> {{ valinc.get('zestimate') | currency }}</div>
+        <div class="col-md-3">
+          <strong>Zestimate Range:</strong>
+          {% set zr = valinc.get('zestimateRange', {}) %}
+          {{ zr.get('low') | currency }} – {{ zr.get('high') | currency }}
+        </div>
+        <div class="col-md-3"><strong>Rent Estimate:</strong> {{ valinc.get('rentEstimate') | currency }}</div>
+        <div class="col-md-3"><strong>Gross Yield:</strong> {{ valinc.get('grossYield') | percent }}</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 4) Lot & Building -->
+  <div class="card mb-3">
+    <div class="card-header">4) Lot & Building</div>
+    <div class="card-body">
+      <div class="row">
+        <div class="col-md-3"><strong>Lot Size:</strong> {{ lotbld.get('lotSize') or "—" }}</div>
+        <div class="col-md-3"><strong>Living Area:</strong> {{ lotbld.get('livingArea') or "—" }}</div>
+        <div class="col-md-3"><strong>Year Built:</strong> {{ lotbld.get('yearBuilt') or "—" }}</div>
+        <div class="col-md-3"><strong>Construction:</strong> {{ lotbld.get('constructionType') or "—" }}</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 5) Location Desirability -->
+  <div class="card mb-3">
+    <div class="card-header">5) Location Desirability</div>
+    <div class="card-body">
+      <div class="row">
+        <div class="col-md-4"><strong>School District:</strong> {{ loc.get('schoolDistrict') or details.get('schoolDistrict') or "—" }}</div>
+        <div class="col-md-4"><strong>Walk/Transit Score:</strong>
+          {% set w = loc.get('walkTransit') %}
+          {% if w is mapping %}
+            {% set ws = w.get('walkScore') %}
+            {% set ts = w.get('transitScore') %}
+            {% if ws or ts %}
+              Walk {{ ws or "—" }} / Transit {{ ts or "—" }}
+            {% else %}
+              {{ w }}
+            {% endif %}
+          {% else %}
+            {{ w or "—" }}
+          {% endif %}
+        </div>
+        <div class="col-md-4"><strong>Crime Rating:</strong> {{ loc.get('crimeRating') or "—" }}</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 6) Marketability -->
+  <div class="card mb-3">
+    <div class="card-header">6) Marketability</div>
+    <div class="card-body">
+      <div class="row">
+        <div class="col-md-3"><strong>Days on Market:</strong> {{ marketab.get('daysOnMarket') or "—" }}</div>
+        <div class="col-md-3"><strong>Prev Listings:</strong> {{ marketab.get('previousListingHistory') or "—" }}</div>
+        <div class="col-md-3"><strong>HOA:</strong> {{ marketab.get('hoa') or "—" }}</div>
+        <div class="col-md-3"><strong>Rental Restrictions:</strong> {{ marketab.get('rentalRestrictions') or "—" }}</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 7) Repair & Rehab -->
+  <div class="card mb-3">
+    <div class="card-header">7) Repair & Rehab</div>
+    <div class="card-body">
+      <div><strong>Condition:</strong> {{ rehab.get('condition') or "—" }}</div>
+      <div class="mt-2"><strong>Estimated Rehab Cost:</strong> {{ rehab.get('estimatedRehabCost') or "—" }}</div>
+    </div>
+  </div>
+
+  <!-- 8) Exit Strategy Flags -->
+  <div class="card mb-3">
+    <div class="card-header">8) Exit Strategy Flags</div>
+    <div class="card-body">
+      <div class="row">
+        <div class="col-md-3"><strong>Flip Potential:</strong> {{ exitf.get('flipPotential') or "—" }}</div>
+        <div class="col-md-3"><strong>BRRRR Potential:</strong> {{ exitf.get('brrrrPotential') or "—" }}</div>
+        <div class="col-md-3"><strong>Wholesale Spread:</strong> {{ exitf.get('wholesaleSpread') or "—" }}</div>
+        <div class="col-md-3"><strong>Creative Finance:</strong> {{ exitf.get('creativeFinance') or "—" }}</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Market section (ZIP) -->
+  {% if market %}
+  <div class="card mb-4">
+    <div class="card-header">Market (ZIP)</div>
+    <div class="card-body">
+      <div class="row">
+        <div class="col-md-3"><strong>Median Rent:</strong> {{ market.get('medianRent') | currency }}</div>
+        <div class="col-md-3"><strong>Avg Days on Market:</strong> {{ market.get('avgDaysOnMarket') or "—" }}</div>
+        <div class="col-md-3"><strong>Available Rentals:</strong> {{ market.get('availableRentals') or "—" }}</div>
+        <div class="col-md-3"><strong>Temp:</strong> {{ market.get('temperature') or "—" }}</div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+</div>
 {% endblock %}

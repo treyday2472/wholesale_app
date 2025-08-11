@@ -72,7 +72,6 @@ def _get(url: str, headers: Dict[str, str], params: Dict[str, Any]) -> Dict[str,
     except ValueError:
         raise ZillowError("Response was not JSON.")
 
-    # Some wrappers return {"message": "..."} or {"error": "..."} on errors
     if isinstance(data, dict):
         msg = data.get("message") or data.get("error")
         if msg and r.status_code != 200:
@@ -119,15 +118,6 @@ def market_data_by_zip(zip_code: str,
 def evaluate_address_with_marketdata(address: str,
                                      api_key: Optional[str] = None,
                                      host: Optional[str] = None) -> Dict[str, Any]:
-    """
-    Minimal evaluation using ZIP-level market stats (this API's capability).
-    Returns:
-      {
-        "home":   { "fullAddress": "...", "zip": "32810" },
-        "market": { "medianRent": ..., "temperature": "...", "raw": {...} },
-        "comps":  []
-      }
-    """
     zip_code = _extract_zip(address)
     if not zip_code:
         raise ZillowError("Could not determine ZIP from the address. Include a 5-digit ZIP.")
@@ -144,7 +134,7 @@ def evaluate_address_with_marketdata(address: str,
         "monthlyChange": summary.get("monthlyChange"),
         "yearlyChange": summary.get("yearlyChange"),
         "temperature": temp,
-        "raw": md,  # keep raw for debugging/expansion
+        "raw": md,
     }
 
     return {
@@ -157,7 +147,6 @@ def evaluate_address_with_marketdata(address: str,
 # ---- Property search + details (provider-agnostic via config) ----
 
 def _p_cfg(name: str, default: str = "") -> str:
-    # prefer Flask config, then env (same style as your _cfg)
     try:
         from flask import current_app as _ca
         val = (_ca.config.get(name) or os.getenv(name, default)).strip()
@@ -176,22 +165,12 @@ def search_address_for_zpid(address: str,
                             host: Optional[str] = None,
                             path_override: Optional[str] = None) -> Optional[str]:
     """
-    Try multiple zillow-com1-compatible ways to resolve an address -> zpid.
-
-    ORDER:
-      1) Explicit override path (if provided/configured)
-      2) /propertyExtendedSearch  (location=<address>)
-      3) /searchByUrl             (url=https://www.zillow.com/homes/<addr>_rb/)
-      4) /locationSuggestions     (q=<address>) -> build searchByUrl from region url
-
-    Returns a string zpid or None.
+    Resolve an address -> zpid with multiple fallbacks.
     """
-    # 0) Setup
     chosen_host = host or _p_cfg("PROPERTY_HOST")
     headers = _headers(api_key, chosen_host)
     base = _provider_base(chosen_host)
 
-    # Helper to pluck a zpid from a generic response
     def _pluck_zpid(data: Any) -> Optional[str]:
         if isinstance(data, dict):
             for key in ("data", "results", "properties", "items", "props", "list"):
@@ -214,7 +193,7 @@ def search_address_for_zpid(address: str,
                 return str(z)
         return None
 
-    # 1) custom path first (if configured)
+    # 1) custom
     path = (path_override or _p_cfg("PROPERTY_SEARCH_PATH", "")).strip()
     if path:
         url = f"{base}{path}"
@@ -265,10 +244,6 @@ def property_details_by_zpid(zpid: str,
                              api_key: Optional[str] = None,
                              host: Optional[str] = None,
                              path_override: Optional[str] = None) -> Dict[str, Any]:
-    """
-    Fetch detailed property facts by zpid/resourceId, mirroring:
-      GET https://zillow-com1.p.rapidapi.com/property?zpid=<ID>
-    """
     headers = _headers(api_key, host or _p_cfg("PROPERTY_HOST"))
     base = _provider_base(host or _p_cfg("PROPERTY_HOST"))
     path = (path_override or _p_cfg("PROPERTY_DETAILS_PATH", "/property"))
@@ -276,6 +251,72 @@ def property_details_by_zpid(zpid: str,
     params = {"zpid": zpid}
     return _get(url, headers, params)
 
+
+# ---- Extra endpoints we need for 1–8 ----
+
+def price_and_tax_history_by_zpid(zpid: str,
+                                  api_key: Optional[str] = None,
+                                  host: Optional[str] = None) -> Dict[str, Any]:
+    headers = _headers(api_key, host)
+    base = f"https://{headers['x-rapidapi-host']}"
+    url = f"{base}/priceAndTaxHistory"
+    return _get(url, headers, {"zpid": zpid})
+
+
+def zestimate_by_zpid(zpid: str,
+                      api_key: Optional[str] = None,
+                      host: Optional[str] = None) -> Dict[str, Any]:
+    headers = _headers(api_key, host)
+    base = f"https://{headers['x-rapidapi-host']}"
+    url = f"{base}/zestimate"
+    return _get(url, headers, {"zpid": zpid})
+
+
+def rent_estimate(address_bits: Dict[str, Any],
+                  api_key: Optional[str] = None,
+                  host: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """
+    /rentEstimate usually needs address fields, not zpid.
+    We try to pass: address, city, state, zipcode
+    """
+    headers = _headers(api_key, host)
+    base = f"https://{headers['x-rapidapi-host']}"
+    url = f"{base}/rentEstimate"
+
+    addr = address_bits.get("street") or address_bits.get("streetAddress") or address_bits.get("line")
+    city = address_bits.get("city")
+    state = address_bits.get("state")
+    zipc = address_bits.get("zipcode") or address_bits.get("postalCode") or address_bits.get("zip")
+
+    if not (addr and city and state and zipc):
+        return None
+
+    status, data = _try_get(url, headers, {
+        "address": addr, "city": city, "state": state, "zipcode": zipc
+    })
+    return data if status == 200 else None
+
+
+def walk_transit_scores(lat: Optional[float], lng: Optional[float],
+                        api_key: Optional[str] = None,
+                        host: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """
+    Tries /walkAndTransitScore. Params vary by provider; we try lat/lng first.
+    """
+    if lat is None or lng is None:
+        return None
+    headers = _headers(api_key, host)
+    base = f"https://{headers['x-rapidapi-host']}"
+    url = f"{base}/walkAndTransitScore"
+    status, data = _try_get(url, headers, {"latitude": lat, "longitude": lng})
+    if status == 200:
+        return data
+    # fallback try alt param names
+    status2, data2 = _try_get(url, headers, {"lat": lat, "lon": lng})
+    return data2 if status2 == 200 else None
+
+
+# ---- Normalize helpers ----
 
 def pick(obj: dict, *keys, default=None):
     for k in keys:
@@ -294,14 +335,12 @@ def _stringify_address(val: Any) -> str:
         return val.strip()
 
     if isinstance(val, dict):
-        # Common key names seen across providers
         parts = []
         street = val.get("fullAddress") or val.get("streetAddress") or val.get("address") or ""
         city = val.get("city") or ""
         state = val.get("state") or ""
         zipc = val.get("zipcode") or val.get("zip") or val.get("postalCode") or ""
 
-        # Some providers nest under 'address'
         nested = val.get("address")
         if not street and isinstance(nested, dict):
             street = nested.get("streetAddress") or nested.get("line") or street
@@ -323,18 +362,38 @@ def _stringify_address(val: Any) -> str:
     return str(val).strip()
 
 
+def _address_bits(raw: dict) -> Dict[str, Any]:
+    """
+    Extract address parts useful for /rentEstimate
+    """
+    container = pick(raw, "home", "property", "data", default=raw if isinstance(raw, dict) else {})
+    if not isinstance(container, dict):
+        container = {}
+    addr = pick(container, "address", "fullAddress", "formattedAddress", "streetAddress")
+    bits: Dict[str, Any] = {}
+    if isinstance(addr, dict):
+        bits["street"] = addr.get("streetAddress") or addr.get("fullAddress") or addr.get("line")
+        bits["city"] = addr.get("city")
+        bits["state"] = addr.get("state")
+        bits["zipcode"] = addr.get("zipcode") or addr.get("postalCode") or addr.get("zip")
+    else:
+        # We won't try to parse a single line; rely on zipcode in full string if needed.
+        pass
+    return bits
+
+
 def normalize_details(raw: dict) -> dict:
     """
     Map whatever the provider returns to a consistent shape your app expects.
-    We look in common containers then pick common key names.
     Always flattens fullAddress to a string.
     """
     container = pick(raw, "home", "property", "data", default=raw if isinstance(raw, dict) else {})
     if not isinstance(container, dict):
         container = {}
 
-    # Always flatten address
     addr_candidate = pick(container, "fullAddress", "address", "formattedAddress", "streetAddress")
+    home_type = pick(container, "homeType", "propertyType", "type", "useCode")
+    units = pick(container, "unitCount", "units")
 
     return {
         "zpid": pick(container, "zpid", "id", "resourceId"),
@@ -347,6 +406,8 @@ def normalize_details(raw: dict) -> dict:
         "lat": pick(container, "latitude", "lat"),
         "lng": pick(container, "longitude", "lng"),
         "schoolDistrict": pick(container, "schoolDistrict", "district"),
+        "homeType": home_type,
+        "unitCount": units,
         "raw": raw,
     }
 
@@ -361,13 +422,6 @@ def address_to_details(address: str,
                        details_path: Optional[str] = None,
                        normalize: bool = True,
                        include_market: bool = False) -> Dict[str, Any]:
-    """
-    One-stop helper:
-      1) search address -> zpid
-      2) fetch /property by zpid
-      3) (optional) normalize shape
-      4) (optional) attach ZIP-level market stats
-    """
     zpid = search_address_for_zpid(address, api_key=api_key, host=host, path_override=search_path)
     if not zpid:
         raise ZillowError("No matching property/zpid found for that address.")
@@ -375,18 +429,182 @@ def address_to_details(address: str,
     raw = property_details_by_zpid(zpid, api_key=api_key, host=host, path_override=details_path)
     result: Dict[str, Any] = normalize_details(raw) if normalize else raw
 
-    if include_market:
+    if include_market and isinstance(result, dict):
         try:
-            zip_code = _extract_zip(address) or (
-                isinstance(result, dict) and _extract_zip(result.get("fullAddress", ""))
-            )
+            zip_code = _extract_zip(address) or _extract_zip(result.get("fullAddress", ""))
             if zip_code:
-                md = evaluate_address_with_marketdata(address or (result.get("fullAddress", "") if isinstance(result, dict) else ""),
-                                                      api_key=api_key, host=host)
-                if isinstance(result, dict):
-                    result["market"] = md.get("market") if isinstance(md, dict) else None
+                md = evaluate_address_with_marketdata(address or result.get("fullAddress", ""), api_key=api_key, host=host)
+                result["market"] = md.get("market") if isinstance(md, dict) else None
         except ZillowError:
-            if isinstance(result, dict):
-                result["market"] = None
+            result["market"] = None
 
     return result
+
+
+# ---------------- Investor snapshot (covers your 1–8) --------------------------
+
+def _classify_type(home_type: Optional[str], unit_count: Optional[int]) -> Dict[str, Any]:
+    t = (home_type or "").lower()
+    category = "unknown"
+    if any(s in t for s in ["single", "sfr", "house", "detached"]):
+        category = "sfr"
+    elif any(s in t for s in ["duplex"]):
+        category = "duplex"
+    elif any(s in t for s in ["triplex"]):
+        category = "triplex"
+    elif any(s in t for s in ["quad", "fourplex", "four-plex"]):
+        category = "fourplex"
+    elif any(s in t for s in ["multi", "apartment", "condo", "townhouse", "townhome"]):
+        category = "multifamily" if "multi" in t or (unit_count and unit_count > 1) else t
+
+    return {"propertyTypeRaw": home_type, "classification": category, "unitCount": unit_count}
+
+
+def _last_sale_from_history(hist: Dict[str, Any]) -> Tuple[Optional[float], Optional[str], Optional[str]]:
+    """
+    Try to extract last sale price/date and purchase method from /priceAndTaxHistory.
+    """
+    records = []
+    for key in ("priceHistory", "data", "history", "events"):
+        arr = hist.get(key)
+        if isinstance(arr, list):
+            records = arr
+            break
+    sale_price = None
+    sale_date = None
+    method = None
+    # iterate newest -> oldest
+    for rec in (records or []):
+        etype = (rec.get("event") or rec.get("type") or "").lower()
+        if "sold" in etype or etype == "sale" or "sale" in etype:
+            sale_price = rec.get("price") or rec.get("amount")
+            sale_date = rec.get("date")
+            method = rec.get("source") or rec.get("buyerType") or rec.get("purchaseMethod")
+            break
+    return sale_price, sale_date, method
+
+
+def investor_snapshot_by_zpid(zpid: str,
+                              *,
+                              api_key: Optional[str] = None,
+                              host: Optional[str] = None,
+                              include_market: bool = True) -> Dict[str, Any]:
+    """
+    Build an 'investor snapshot' dictionary that covers buckets 1–8.
+    """
+    # Base details
+    raw_details = property_details_by_zpid(zpid, api_key=api_key, host=host)
+    details = normalize_details(raw_details)
+    addr_bits = _address_bits(raw_details)
+
+    # 1) Ownership & mortgage info (limited by API)
+    pth = price_and_tax_history_by_zpid(zpid, api_key=api_key, host=host)
+    last_price, last_date, purchase_method = _last_sale_from_history(pth)
+    ownership_mortgage = {
+        "lastSoldPrice": last_price,
+        "lastSoldDate": last_date,
+        "purchaseMethod": purchase_method,
+        "mortgageAmount": None,
+        "mortgageOriginationDate": None,
+        "mortgageType": None,
+        "lender": None,
+        "ownerOccupied": None,
+    }
+
+    # 2) Property classification
+    classification = _classify_type(details.get("homeType"), details.get("unitCount"))
+
+    # 3) Valuation & income potential
+    zdata = zestimate_by_zpid(zpid, api_key=api_key, host=host)
+    zestimate_val = zdata.get("zestimate") if isinstance(zdata, dict) else None
+    z_low = zdata.get("low") if isinstance(zdata, dict) else None
+    z_high = zdata.get("high") if isinstance(zdata, dict) else None
+
+    rdata = rent_estimate(addr_bits, api_key=api_key, host=host) or {}
+    rent_val = rdata.get("rentZestimate") or rdata.get("rent") or rdata.get("estimate")
+
+    valuation_income = {
+        "zestimate": zestimate_val,
+        "zestimateRange": {"low": z_low, "high": z_high},
+        "rentEstimate": rent_val,
+        "grossYield": (round(((rent_val or 0) * 12 / zestimate_val * 100), 2)
+                       if (rent_val and zestimate_val and zestimate_val > 0) else None),
+    }
+
+    # 4) Lot & building specs (already in details)
+    lot_building = {
+        "lotSize": details.get("lotSize"),
+        "livingArea": details.get("livingArea"),
+        "yearBuilt": details.get("yearBuilt"),
+        "constructionType": None,
+        "majorSystemsAge": {"roof": None, "hvac": None, "waterHeater": None},
+    }
+
+    # 5) Location desirability
+    scores = walk_transit_scores(details.get("lat"), details.get("lng"), api_key=api_key, host=host) or {}
+    location_desirability = {
+        "schoolDistrict": details.get("schoolDistrict"),
+        "walkTransit": scores,
+        "crimeRating": None,
+        "keyAmenities": None,
+    }
+
+    # 6) Marketability (limited w/out active listing context)
+    marketability = {
+        "daysOnMarket": None,  # not reliable unless tied to an active listing
+        "previousListingHistory": None,
+        "hoa": None,
+        "rentalRestrictions": None,
+    }
+
+    # 7) Repair & rehab (requires manual input or MLS enrich)
+    rehab = {
+        "condition": None,
+        "estimatedRehabCost": None,
+        "photos": None,
+    }
+
+    # 8) Exit strategy flags (basic heuristics)
+    exit_flags = {
+        "flipPotential": None,    # needs comp/rehab logic
+        "brrrrPotential": None,   # needs DSCR + rate assumptions
+        "wholesaleSpread": None,  # needs seller ask/contract price
+        "creativeFinance": None,  # needs mortgage data
+    }
+
+    snapshot: Dict[str, Any] = {
+        "meta": {"zpid": details.get("zpid"), "fullAddress": details.get("fullAddress")},
+        "1_ownership_mortgage": ownership_mortgage,
+        "2_classification": classification,
+        "3_valuation_income": valuation_income,
+        "4_lot_building": lot_building,
+        "5_location_desirability": location_desirability,
+        "6_marketability": marketability,
+        "7_rehab": rehab,
+        "8_exit_flags": exit_flags,
+        "details": details,   # include normalized details
+    }
+
+    if include_market:
+        try:
+            fa = details.get("fullAddress", "")
+            md = evaluate_address_with_marketdata(fa, api_key=api_key, host=host)
+            snapshot["market"] = md.get("market")
+        except ZillowError:
+            snapshot["market"] = None
+
+    return snapshot
+
+
+def investor_snapshot_by_address(address: str,
+                                 *,
+                                 api_key: Optional[str] = None,
+                                 host: Optional[str] = None,
+                                 include_market: bool = True) -> Dict[str, Any]:
+    """
+    Address -> zpid -> snapshot
+    """
+    zpid = search_address_for_zpid(address, api_key=api_key, host=host)
+    if not zpid:
+        raise ZillowError("No matching property/zpid found for that address.")
+    return investor_snapshot_by_zpid(zpid, api_key=api_key, host=host, include_market=include_market)

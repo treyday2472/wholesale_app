@@ -6,6 +6,8 @@ from flask import (
 )
 from werkzeug.utils import secure_filename
 
+from .models import Property
+from.services.investor_snapshot import build_snapshot_for_property
 from . import db
 from .forms import (
     LeadStep1Form, LeadStep2Form, UpdateStatusForm,
@@ -200,7 +202,7 @@ def lead_new_step2():
 
     return render_template('lead_step2.html', form=form)
 
-@main.route('/properties/<int:property_id>/refresh', methods=['POST'])
+@main.route('/properties/<int:property_id>/refresh', methods=['GET','POST'])
 def property_refresh(property_id):
     prop = Property.query.get_or_404(property_id)
     addr = prop.full_address or prop.address
@@ -434,9 +436,10 @@ def property_new():
     )
 
 @main.route('/properties/<int:property_id>')
-def property_detail(property_id):
+def property_detail(property_id: int):
     prop = Property.query.get_or_404(property_id)
 
+    snapshot = build_snapshot_for_property(prop)
     comps = []
     market = {}
     try:
@@ -456,6 +459,7 @@ def property_detail(property_id):
         prop=prop,
         comps=comps,
         market=market,  # <-- pass parsed dict
+        snapshot=snapshot or {},
         GOOGLE_MAPS_API_KEY=current_app.config.get('GOOGLE_MAPS_API_KEY', '')
     )
 

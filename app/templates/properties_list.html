@@ -1,67 +1,71 @@
 {% extends "base.html" %}
-{% block content %}
+{% block title %}Properties{% endblock %}
 
-<div class="d-flex align-items-center justify-content-between mb-3">
-  <h2 class="mb-0">Properties</h2>
-  <div>
-    <a class="btn btn-outline-light me-2" href="{{ url_for('main.property_new') }}">+ Add Property</a>
-    <a class="btn btn-light me-2" href="{{ url_for('main.leads_list') }}">Leads</a>
-    <a class="btn btn-light" href="{{ url_for('main.buyers_list') }}">Buyers</a>
+{% block content %}
+<div class="container my-4">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h2 class="mb-0">Properties</h2>
+    <a class="btn btn-primary" href="{{ url_for('main.property_new') }}">Add Property</a>
+  </div>
+
+  <form class="mb-3" method="get" action="{{ url_for('main.properties_list') }}">
+    <div class="input-group">
+      <input
+        type="text"
+        class="form-control"
+        name="q"
+        placeholder="Search by address or school district…"
+        value="{{ q or '' }}"
+      />
+      <button class="btn btn-outline-secondary" type="submit">Search</button>
+    </div>
+  </form>
+
+  <div class="table-responsive">
+    <table class="table table-hover align-middle">
+      <thead>
+        <tr>
+          <th style="min-width: 280px;">Address</th>
+          <th>Beds</th>
+          <th>Baths</th>
+          <th>Sq Ft</th>
+          <th>Year</th>
+          <th>School District</th>
+          <th style="width: 120px;">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in props %}
+          <tr>
+            <td>
+              <a href="{{ url_for('main.property_detail', property_id=p.id) }}">
+                {{ p.full_address or p.address or ('Property #' ~ p.id) }}
+              </a>
+            </td>
+            <td>{{ p.beds or "—" }}</td>
+            <td>{{ p.baths or "—" }}</td>
+            <td>{{ p.sqft or "—" }}</td>
+            <td>{{ p.year_built or "—" }}</td>
+            <td>{{ p.school_district or "—" }}</td>
+            <td>
+              <form
+                action="{{ url_for('main.delete_property', property_id=p.id) }}"
+                method="post"
+                class="d-inline"
+                onsubmit="return confirm('Delete this property? This cannot be undone.');"
+              >
+                {% if csrf_token %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endif %}
+                <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+              </form>
+            </td>
+          </tr>
+        {% else %}
+          <tr>
+            <td colspan="7" class="text-muted">No properties found.</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
   </div>
 </div>
-
-<form class="row g-2 mb-3" method="GET" action="{{ url_for('main.properties_list') }}">
-  <div class="col-md-9">
-    <input name="q" class="form-control"
-           placeholder="Search address, full address, school district"
-           value="{{ q }}">
-  </div>
-  <div class="col-md-3">
-    <button class="btn btn-outline-light w-100" type="submit">Filter</button>
-  </div>
-</form>
-
-<table class="table table-dark table-striped align-middle">
-  <thead>
-    <tr>
-      <th style="width:70px;">ID</th>
-      <th>Address</th>
-      <th>ARV</th>
-      <th>Beds/Baths</th>
-      <th>SqFt</th>
-      <th>School District</th>
-      <th style="width:210px;"></th>
-    </tr>
-  </thead>
-  <tbody>
-  {% if props %}
-    {% for p in props %}
-      <tr>
-        <td>#{{ p.id }}</td>
-        <td>{{ p.full_address or p.address }}</td>
-        <td>{{ p.arv_estimate if p.arv_estimate else "—" }}</td>
-        <td>{{ p.beds or "—" }}/{{ p.baths or "—" }}</td>
-        <td>{{ p.sqft or "—" }}</td>
-        <td>{{ p.school_district or "—" }}</td>
-        <td class="text-nowrap">
-          <a class="btn btn-sm btn-light me-2"
-             href="{{ url_for('main.property_detail', property_id=p.id) }}">Open</a>
-          <form method="POST"
-                action="{{ url_for('main.delete_property', property_id=p.id) }}"
-                style="display:inline"
-                onsubmit="return confirm('Delete property #{{ p.id }}?');">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <button class="btn btn-sm btn-outline-danger">Delete</button>
-          </form>
-        </td>
-      </tr>
-    {% endfor %}
-  {% else %}
-      <tr><td colspan="7" class="text-center">No properties found.</td></tr>
-  {% endif %}
-  </tbody>
-</table>
-
 {% endblock %}
-
-
