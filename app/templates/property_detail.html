@@ -2,47 +2,68 @@
 {% block title %}Property {{ prop.id }}{% endblock %}
 
 {% block content %}
-{% set snap = snapshot or {} %}
-{% set meta = snap.get('meta', {}) %}
+{# -------- snapshot shorthands -------- #}
+{% set snap    = snapshot or {} %}
+{% set meta    = snap.get('meta', {}) %}
 {% set details = snap.get('details', {}) %}
-{% set own = snap.get('1_ownership_mortgage', {}) %}
-{% set cls = snap.get('2_classification', {}) %}
-{% set valinc = snap.get('3_valuation_income', {}) %}
-{% set lotbld = snap.get('4_lot_building', {}) %}
-{% set loc = snap.get('5_location_desirability', {}) %}
-{% set marketab = snap.get('6_marketability', {}) %}
-{% set rehab = snap.get('7_rehab', {}) %}
-{% set exitf = snap.get('8_exit_flags', {}) %}
-{% set market = snap.get('market') %}
+{% set own     = snap.get('1_ownership_mortgage', {}) %}
+{% set cls     = snap.get('2_classification', {}) %}
+{% set valinc  = snap.get('3_valuation_income', {}) %}
+{% set lotbld  = snap.get('4_lot_building', {}) %}
+{% set loc     = snap.get('5_location_desirability', {}) %}
+{% set marketab= snap.get('6_marketability', {}) %}
+{% set rehab   = snap.get('7_rehab', {}) %}
+{% set exitf   = snap.get('8_exit_flags', {}) %}
+{% set market  = snap.get('market') %}
 
+{# -------- address / coords / photo detection -------- #}
 {% set lat = details.get('lat') or prop.lat %}
 {% set lng = details.get('lng') or prop.lng %}
 {% set fulladdr = meta.get('fullAddress') or prop.full_address or ("Property " ~ prop.id) %}
 
-{# --- Try to find a Zillow image in raw payload; fallback to Street View --- #}
 {% set raw = details.get('raw', {}) %}
-{% set photos = raw.get('photos') or raw.get('images') or (raw.get('media', {}) if raw else {}).get('photos') or [] %}
-{% set first_photo = None %}
-{% if photos %}
-  {% if photos[0] is string %}
-    {% set first_photo = photos[0] %}
-  {% elif photos[0] is mapping %}
-    {% set first_photo = photos[0].get('url') 
+{% set first_photo = raw.get('imgSrc')
+    or (raw.get('primaryImageUrl') if raw else None)
+    or (raw.get('imageUrl') if raw else None) %}
+
+{# if a photos array exists, try first usable url #}
+{% if not first_photo %}
+  {% set photos = raw.get('photos') or raw.get('images')
+      or (raw.get('media', {}) if raw else {}).get('photos') or [] %}
+  {% if photos %}
+    {% if photos[0] is string %}
+      {% set first_photo = photos[0] %}
+    {% elif photos[0] is mapping %}
+      {% set first_photo = photos[0].get('url')
                           or photos[0].get('href')
                           or (photos[0].get('mixedSources', {}) if photos[0] else {}).get('largest')
-                          or photos[0].get('urlXL') 
-                          or photos[0].get('urlLarge') 
-                          or photos[0].get('url') %}
+                          or photos[0].get('urlXL')
+                          or photos[0].get('urlLarge') %}
+    {% endif %}
   {% endif %}
 {% endif %}
-{% if not first_photo %}
-  {% set first_photo = raw.get('imgSrc') or raw.get('primaryImageUrl') or raw.get('imageUrl') %}
-{% endif %}
+
+{# lot size pretty text: prefer normalized display, else build from sqft #}
+{% set lot_disp = details.get('lotSizeDisplay')
+    or (lotbld.get('lotSizeDisplay'))
+    or ((details.get('lotSize') or lotbld.get('lotSize') or prop.lot_size) and (
+         ((details.get('lotSize') or lotbld.get('lotSize') or prop.lot_size)|int)|string ~ ' sqft'
+       )) %}
 
 <div class="container my-4">
   <div class="d-flex justify-content-between align-items-center mb-3">
     <h2 class="mb-0">{{ fulladdr }}</h2>
-    <a class="btn btn-sm btn-primary" href="{{ url_for('main.property_refresh', property_id=prop.id) }}">Refresh</a>
+
+    <div class="d-flex gap-2">
+      <form method="post" action="{{ url_for('main.property_refresh', property_id=prop.id) }}" class="d-inline">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="btn btn-sm btn-primary" type="submit">Refresh</button>
+      </form>
+      <form method="post" action="{{ url_for('main.delete_property', property_id=prop.id) }}" class="d-inline"
+            onsubmit="return confirm('Delete this property?');">
+        <button class="btn btn-sm btn-outline-danger" type="submit">Delete</button>
+      </form>
+    </div>
   </div>
 
   <!-- Hero: Photo + Map -->
@@ -100,9 +121,9 @@
         <div class="col-md-3"><strong>Sq Ft:</strong> {{ details.get('livingArea') or prop.sqft or "—" }}</div>
       </div>
       <div class="row mt-2">
-        <div class="col-md-3"><strong>Lot Size:</strong> {{ details.get('lotSize') or prop.lot_size or "—" }}</div>
+        <div class="col-md-3"><strong>Lot Size:</strong> {{ lot_disp or "—" }}</div>
         <div class="col-md-3"><strong>Year Built:</strong> {{ details.get('yearBuilt') or prop.year_built or "—" }}</div>
-        <div class="col-md-3"><strong>Lat/Lng:</strong> {{ lat or "—" }}, {{ lng or "—" }}</div>
+        <div class="col-md-3"><strong>Est. ARV:</strong> {{ (prop.arv_estimate or valinc.get('zestimate')) | currency }}</div>
         <div class="col-md-3"><strong>School District:</strong> {{ details.get('schoolDistrict') or prop.school_district or "—" }}</div>
       </div>
     </div>
@@ -161,9 +182,9 @@
     <div class="card-header">4) Lot & Building</div>
     <div class="card-body">
       <div class="row">
-        <div class="col-md-3"><strong>Lot Size:</strong> {{ lotbld.get('lotSize') or "—" }}</div>
-        <div class="col-md-3"><strong>Living Area:</strong> {{ lotbld.get('livingArea') or "—" }}</div>
-        <div class="col-md-3"><strong>Year Built:</strong> {{ lotbld.get('yearBuilt') or "—" }}</div>
+        <div class="col-md-3"><strong>Lot Size:</strong> {{ lot_disp or "—" }}</div>
+        <div class="col-md-3"><strong>Living Area:</strong> {{ lotbld.get('livingArea') or details.get('livingArea') or "—" }}</div>
+        <div class="col-md-3"><strong>Year Built:</strong> {{ lotbld.get('yearBuilt') or details.get('yearBuilt') or "—" }}</div>
         <div class="col-md-3"><strong>Construction:</strong> {{ lotbld.get('constructionType') or "—" }}</div>
       </div>
     </div>
@@ -229,7 +250,7 @@
     </div>
   </div>
 
-  <!-- Market section (ZIP) -->
+  <!-- Market (ZIP) -->
   {% if market %}
   <div class="card mb-4">
     <div class="card-header">Market (ZIP)</div>
@@ -243,6 +264,5 @@
     </div>
   </div>
   {% endif %}
-
 </div>
 {% endblock %}

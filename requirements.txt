@@ -5,4 +5,5 @@ email_validator
 WTForms
 Flask-Migrate
 python-dotenv
+Flask-APScheduler>=1.13.1
 requests python-dateutil

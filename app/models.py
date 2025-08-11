@@ -79,3 +79,39 @@ class Buyer(db.Model):
     notes             = db.Column(db.Text)
 
     source            = db.Column(db.String(100), default="Web Form")
+
+class LeadEvent(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    lead_id = db.Column(db.Integer, db.ForeignKey('lead.id'), nullable=True)
+    kind = db.Column(db.String(50), nullable=False)
+    payload = db.Column(db.JSON, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    # Backref
+    lead = db.relationship('Lead', backref=db.backref('events', lazy=True))
+
+    @property
+    def payload_json(self):
+        return self.payload
+
+    @payload_json.setter
+    def payload_json(self, val):
+        self.payload = val
+
+
+def _safe_dict(obj, fields):
+    return {f: getattr(obj, f) for f in fields}
+
+try:
+    def _lead_to_dict(self):
+        return _safe_dict(self, ['id','first_name','last_name','phone','email','lead_source','lead_status','created_at','updated_at','notes','property_id'])
+    Lead.to_dict = _lead_to_dict
+except Exception:
+    pass
+
+try:
+    def _property_to_dict(self):
+        return _safe_dict(self, ['id','address','full_address','city','state','zip_code','beds','baths','sqft','zestimate','rent_zestimate','created_at'])
+    Property.to_dict = _property_to_dict
+except Exception:
+    pass

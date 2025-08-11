@@ -2,6 +2,7 @@
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from flask_wtf.csrf import CSRFProtect
+from flask_apscheduler import APScheduler
 from dotenv import load_dotenv
 import os
 
@@ -40,8 +41,51 @@ def create_app():
     from .routes import main
     app.register_blueprint(main)
 
+    # Register API blueprint
+    from api.routes import api as api_blueprint
+    app.register_blueprint(api_blueprint)
+
+        # Start scheduler
+    try:
+        scheduler = _Scheduler()
+        scheduler.init_app(app)
+        scheduler.start()
+        scheduler.add_job(id='missed_call_autoresponder', func=_job_missed_call_autoresponder, trigger='interval', minutes=5)
+        scheduler.add_job(id='nudge_24h', func=_job_24h_nudge, trigger='interval', hours=6)
+    except Exception as e:
+        app.logger.warning(f'APScheduler not started: {e}')
+
     with app.app_context():
         db.create_all()
 
     return app
 
+
+
+# ---- APScheduler integration ----
+class _Scheduler(APScheduler):
+    pass
+
+def _job_missed_call_autoresponder():
+    from app import db
+    from app.models import LeadEvent, Lead
+    from datetime import datetime, timedelta
+    cutoff = datetime.utcnow() - timedelta(minutes=10)
+    # This is a placeholder logic: find recent 'vonage_voice' events without follow-up
+    events = LeadEvent.query.filter(LeadEvent.kind=='vonage_voice', LeadEvent.created_at>=cutoff).all()
+    # In real implementation, send SMS through Vonage; for now, just log a LeadEvent
+    for evt in events:
+        db.session.add(LeadEvent(lead_id=evt.lead_id, kind='auto_sms', payload={'template':'missed_call_followup'}))
+    db.session.commit()
+
+def _job_24h_nudge():
+    from app import db
+    from app.models import Lead, LeadEvent
+    from datetime import datetime, timedelta
+    cutoff = datetime.utcnow() - timedelta(hours=24)
+    # Find leads with no events in last 24h and status still 'New Lead'
+    stale = Lead.query.filter(Lead.lead_status=='New Lead').all()
+    for l in stale:
+        # In real implementation, send SMS or email nudge
+        db.session.add(LeadEvent(lead_id=l.id, kind='nudge_24h', payload={'note':'nudge queued'}))
+    db.session.commit()
