@@ -112,6 +112,11 @@ def lead_new_step2():
                     flash(f"Unsupported file type: {file.filename}", "warning")
 
         # create lead
+        intake_data = None
+        try:
+            intake_data = json.loads(request.form.get('intake_payload') or '{}')
+        except Exception:
+            intake_data = None
         lead = Lead(
             seller_first_name=step1['seller_first_name'],
             seller_last_name= step1['seller_last_name'],
@@ -134,6 +139,7 @@ def lead_new_step2():
             plumbing_status=form.plumbing_status.data or None,
             image_files=",".join(saved_files) if saved_files else None,
             lead_source="Web Form",
+            intake=intake_data,
         )
         db.session.add(lead)
         db.session.commit()
@@ -471,3 +477,13 @@ def delete_property(property_id):
     db.session.commit()
     flash("Property deleted.", "info")
     return redirect(url_for('main.properties_list'))
+
+
+@main.route('/learn/seller-financing')
+def learn_seller_financing():
+    return render_template('learn_seller_financing.html')
+
+
+@main.route('/lead_form', methods=['GET'])
+def lead_form_alias():
+    return redirect(url_for('main.lead_new_step1'))

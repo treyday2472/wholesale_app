@@ -1,10 +1,9 @@
-# app/services/zillow_client.py
 from __future__ import annotations
 
 import os
 import re
 import requests
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple, List
 from pathlib import Path
 from urllib.parse import quote
 from dotenv import load_dotenv
@@ -13,7 +12,6 @@ try:
     from flask import current_app  # available when inside app context
 except Exception:
     current_app = None
-
 
 # ---- load .env (prefer project-root .env/.env.txt and override OS vars) ----
 _THIS_FILE = Path(__file__).resolve()
@@ -80,7 +78,7 @@ def _get(url: str, headers: Dict[str, str], params: Dict[str, Any]) -> Dict[str,
     return data
 
 
-def _try_get(url: str, headers: Dict[str, str], params: Dict[str, Any]) -> Tuple[int, Optional[Dict[str, Any]]]:
+def _try_get(url: str, headers: Dict[str, str], params: Dict[str, Any]) -> Tuple[int, Any]:
     """Like _get but never raises; returns (status_code, data_or_none)."""
     try:
         r = requests.get(url, headers=headers, params=params, timeout=(6, 20))
@@ -100,7 +98,6 @@ _ZIP_RE = re.compile(r"\b(\d{5})(?:-\d{4})?\b")
 
 
 def _extract_zip(address: str) -> Optional[str]:
-    """Return a 5-digit ZIP if we can spot one in the address."""
     m = _ZIP_RE.search(address or "")
     return m.group(1) if m else None
 
@@ -108,7 +105,6 @@ def _extract_zip(address: str) -> Optional[str]:
 def market_data_by_zip(zip_code: str,
                        api_key: Optional[str] = None,
                        host: Optional[str] = None) -> Dict[str, Any]:
-    """Calls /marketData?resourceId=<ZIP> on the zillow-com1 API."""
     headers = _headers(api_key, host)
     base = f"https://{headers['x-rapidapi-host']}"
     url = f"{base}/marketData"
@@ -123,7 +119,6 @@ def evaluate_address_with_marketdata(address: str,
         raise ZillowError("Could not determine ZIP from the address. Include a 5-digit ZIP.")
 
     md = market_data_by_zip(zip_code, api_key, host)
-
     summary = md.get("summary") or {}
     temp = (md.get("marketTemperature") or {}).get("temperature")
 
@@ -277,7 +272,6 @@ def rent_estimate(address_bits: Dict[str, Any],
                   host: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """
     /rentEstimate usually needs address fields, not zpid.
-    We try to pass: address, city, state, zipcode
     """
     headers = _headers(api_key, host)
     base = f"https://{headers['x-rapidapi-host']}"
@@ -300,9 +294,6 @@ def rent_estimate(address_bits: Dict[str, Any],
 def walk_transit_scores(lat: Optional[float], lng: Optional[float],
                         api_key: Optional[str] = None,
                         host: Optional[str] = None) -> Optional[Dict[str, Any]]:
-    """
-    Tries /walkAndTransitScore. Params vary by provider; we try lat/lng first.
-    """
     if lat is None or lng is None:
         return None
     headers = _headers(api_key, host)
@@ -311,7 +302,6 @@ def walk_transit_scores(lat: Optional[float], lng: Optional[float],
     status, data = _try_get(url, headers, {"latitude": lat, "longitude": lng})
     if status == 200:
         return data
-    # fallback try alt param names
     status2, data2 = _try_get(url, headers, {"lat": lat, "lon": lng})
     return data2 if status2 == 200 else None
 
@@ -327,15 +317,11 @@ def pick(obj: dict, *keys, default=None):
 
 
 def _stringify_address(val: Any) -> str:
-    """
-    Convert provider address variants to a single-line string.
-    Accepts str or dict-like with common keys.
-    """
     if isinstance(val, str):
         return val.strip()
 
     if isinstance(val, dict):
-        parts = []
+        parts: List[str] = []
         street = val.get("fullAddress") or val.get("streetAddress") or val.get("address") or ""
         city = val.get("city") or ""
         state = val.get("state") or ""
@@ -356,16 +342,12 @@ def _stringify_address(val: Any) -> str:
         if zipc:
             parts.append(str(zipc).strip())
 
-        line = " ".join(parts).strip()
-        return line or str(val)
+        return " ".join(parts).strip() or str(val)
 
     return str(val).strip()
 
 
 def _address_bits(raw: dict) -> Dict[str, Any]:
-    """
-    Extract address parts useful for /rentEstimate
-    """
     container = pick(raw, "home", "property", "data", default=raw if isinstance(raw, dict) else {})
     if not isinstance(container, dict):
         container = {}
@@ -376,38 +358,211 @@ def _address_bits(raw: dict) -> Dict[str, Any]:
         bits["city"] = addr.get("city")
         bits["state"] = addr.get("state")
         bits["zipcode"] = addr.get("zipcode") or addr.get("postalCode") or addr.get("zip")
-    else:
-        # We won't try to parse a single line; rely on zipcode in full string if needed.
-        pass
     return bits
+
+
+def _to_float(val) -> Optional[float]:
+    try:
+        return float(str(val).replace(",", "").strip())
+    except Exception:
+        return None
+
+
+_ACRE_PAT = re.compile(r"([\d\.,]+)\s*(acre|acres|ac)\b", re.I)
+_SQFT_PAT = re.compile(r"([\d\.,]+)\s*(sq\s*ft|sqft|square\s*feet)\b", re.I)
+
+
+def _lot_from_freeform(text: str) -> Tuple[Optional[int], Optional[str]]:
+    """
+    Parse strings like '0.37 Acres' or '16,117 sqft' and return (sqft, pretty_str).
+    """
+    if not text:
+        return None, None
+    t = text.strip()
+
+    m = _ACRE_PAT.search(t)
+    if m:
+        num = _to_float(m.group(1))
+        if num is not None:
+            sqft = int(round(num * 43560))
+            return sqft, f"{num:g} ac"
+
+    m2 = _SQFT_PAT.search(t)
+    if m2:
+        num = _to_float(m2.group(1))
+        if num is not None:
+            sqft = int(round(num))
+            return sqft, f"{sqft:,} sqft"
+
+    # pure number? heuristics
+    num = _to_float(t)
+    if num is not None:
+        if num < 1000:  # likely acres
+            sqft = int(round(num * 43560))
+            return sqft, f"{num:g} ac"
+        sqft = int(round(num))
+        return sqft, f"{sqft:,} sqft"
+
+    return None, None
+
+
+def _score_district_name(name: str) -> int:
+    """
+    Rough heuristic: prefer strings that look like districts over single schools.
+    """
+    n = (name or "").lower()
+    score = 0
+    if any(k in n for k in ["school district", "isd", "independent sd", "unified", "public schools", "district"]):
+        score += 5
+    if any(k in n for k in ["elementary", "middle", "high", "school"]):
+        score -= 2  # likely a specific school name
+    score += max(0, len(n) // 10)  # longer tends to be district-level
+    return score
+
+
+def _lot_fields(container: dict) -> Tuple[Optional[int], Optional[str]]:
+    """
+    Return (lot_sqft_numeric, lot_display_str).
+    Covers:
+      - resoFacts.atAGlanceFacts["Lot"|"Lot Size"|"Lot Area"]
+      - lotAreaValue + lotAreaUnit(s)
+      - lotSize{SquareFeet,Acres} numeric
+      - lotSize freeform text '0.37 Acres', '16,117 sqft'
+    """
+    # 0) resoFacts.atAGlanceFacts -> "Lot"
+    rf = container.get("resoFacts") or {}
+    gl = rf.get("atAGlanceFacts") or []
+    for f in gl:
+        if isinstance(f, dict):
+            label = (f.get("factLabel") or "").strip().lower()
+            if label in ("lot", "lot size", "lot area"):
+                sqft, disp = _lot_from_freeform(str(f.get("factValue") or ""))
+                if sqft:
+                    return sqft, disp
+
+    # 1) canonical pair
+    val = container.get("lotAreaValue")
+    unit = (container.get("lotAreaUnit") or container.get("lotAreaUnits") or "").lower().strip()
+    if val is not None:
+        num = _to_float(val)
+        if num is not None:
+            if unit.startswith("ac"):
+                sqft = int(round(num * 43560))
+                return sqft, f"{num:g} ac"
+            # if no unit but small number, assume acres
+            if not unit and num < 1000:
+                sqft = int(round(num * 43560))
+                return sqft, f"{num:g} ac"
+            sqft = int(round(num))
+            return sqft, f"{sqft:,} sqft"
+
+    # 2) numeric sqft alternates
+    for k in ("lotSizeSquareFeet", "lot_size_sqft", "lotAreaSqft", "lot_size"):
+        num = _to_float(container.get(k))
+        if num is not None:
+            sqft = int(round(num))
+            return sqft, f"{sqft:,} sqft"
+
+    # 3) numeric acres alternates
+    for k in ("lotSizeAcres", "lot_size_acres", "lotAreaAcres"):
+        num = _to_float(container.get(k))
+        if num is not None:
+            sqft = int(round(num * 43560))
+            return sqft, f"{num:g} ac"
+
+    # 4) freeform strings
+    for k in ("lotSize", "lot_area", "lotArea", "lotSizeText"):
+        v = container.get(k)
+        if isinstance(v, str) and v.strip():
+            sqft, disp = _lot_from_freeform(v)
+            if sqft:
+                return sqft, disp
+
+    return None, None
+
+
+def _extract_school_district(container: dict) -> Optional[str]:
+    # Direct district-named fields
+    for k in ("elementarySchoolDistrict", "middleOrJuniorSchoolDistrict", "highSchoolDistrict"):
+        v = container.get(k)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+
+    candidates: List[str] = []
+
+    for k in ("schoolDistrict", "district", "districtName"):
+        v = container.get(k)
+        if isinstance(v, str) and v.strip():
+            candidates.append(v.strip())
+
+    schools = container.get("schools")
+    if isinstance(schools, dict):
+        for v in schools.values():
+            if isinstance(v, dict):
+                for kk in ("district", "districtName"):
+                    vv = v.get(kk)
+                    if isinstance(vv, str) and vv.strip():
+                        candidates.append(vv.strip())
+    elif isinstance(schools, list):
+        for item in schools:
+            if isinstance(item, dict):
+                for kk in ("district", "districtName"):
+                    vv = item.get(kk)
+                    if isinstance(vv, str) and vv.strip():
+                        candidates.append(vv.strip())
+
+    nearby = container.get("nearbySchools")
+    if isinstance(nearby, list):
+        for item in nearby:
+            if isinstance(item, dict):
+                for kk in ("district", "districtName"):
+                    vv = item.get(kk)
+                    if isinstance(vv, str) and vv.strip():
+                        candidates.append(vv.strip())
+
+    if candidates:
+        # de-dup and prefer district-like names
+        uniq = list(dict.fromkeys(candidates))
+        uniq.sort(key=_score_district_name, reverse=True)
+        return uniq[0]
+    return None
 
 
 def normalize_details(raw: dict) -> dict:
     """
-    Map whatever the provider returns to a consistent shape your app expects.
-    Always flattens fullAddress to a string.
+    Map provider response to a consistent shape.
+    Produces both numeric lotSize (sqft) AND a display string.
+    Extracts a district (not a specific school).
     """
     container = pick(raw, "home", "property", "data", default=raw if isinstance(raw, dict) else {})
     if not isinstance(container, dict):
         container = {}
 
     addr_candidate = pick(container, "fullAddress", "address", "formattedAddress", "streetAddress")
-    home_type = pick(container, "homeType", "propertyType", "type", "useCode")
-    units = pick(container, "unitCount", "units")
+
+    lot_sqft, lot_disp = _lot_fields(container)
+    school_district = _extract_school_district(container)
 
     return {
         "zpid": pick(container, "zpid", "id", "resourceId"),
         "fullAddress": _stringify_address(addr_candidate),
         "bedrooms": pick(container, "bedrooms", "beds"),
         "bathrooms": pick(container, "bathrooms", "baths"),
-        "livingArea": pick(container, "livingArea", "sqft", "living_area"),
-        "lotSize": pick(container, "lotAreaValue", "lotSize", "lot_size"),
+        "livingArea": pick(container, "livingArea", "livingAreaValue", "sqft", "living_area"),
+
+        # Lot: numeric + display
+        "lotSize": lot_sqft,
+        "lotSizeDisplay": lot_disp,
+
         "yearBuilt": pick(container, "yearBuilt", "year_built"),
         "lat": pick(container, "latitude", "lat"),
         "lng": pick(container, "longitude", "lng"),
-        "schoolDistrict": pick(container, "schoolDistrict", "district"),
-        "homeType": home_type,
-        "unitCount": units,
+
+        "schoolDistrict": school_district,
+
+        "homeType": pick(container, "homeType", "propertyType", "propertyTypeDimension", "type", "useCode"),
+        "unitCount": pick(container, "unitCount", "units"),
+
         "raw": raw,
     }
 
@@ -448,22 +603,18 @@ def _classify_type(home_type: Optional[str], unit_count: Optional[int]) -> Dict[
     category = "unknown"
     if any(s in t for s in ["single", "sfr", "house", "detached"]):
         category = "sfr"
-    elif any(s in t for s in ["duplex"]):
+    elif "duplex" in t:
         category = "duplex"
-    elif any(s in t for s in ["triplex"]):
+    elif "triplex" in t:
         category = "triplex"
     elif any(s in t for s in ["quad", "fourplex", "four-plex"]):
         category = "fourplex"
     elif any(s in t for s in ["multi", "apartment", "condo", "townhouse", "townhome"]):
         category = "multifamily" if "multi" in t or (unit_count and unit_count > 1) else t
-
     return {"propertyTypeRaw": home_type, "classification": category, "unitCount": unit_count}
 
 
 def _last_sale_from_history(hist: Dict[str, Any]) -> Tuple[Optional[float], Optional[str], Optional[str]]:
-    """
-    Try to extract last sale price/date and purchase method from /priceAndTaxHistory.
-    """
     records = []
     for key in ("priceHistory", "data", "history", "events"):
         arr = hist.get(key)
@@ -473,8 +624,7 @@ def _last_sale_from_history(hist: Dict[str, Any]) -> Tuple[Optional[float], Opti
     sale_price = None
     sale_date = None
     method = None
-    # iterate newest -> oldest
-    for rec in (records or []):
+    for rec in (records or []):  # newest->oldest is typical
         etype = (rec.get("event") or rec.get("type") or "").lower()
         if "sold" in etype or etype == "sale" or "sale" in etype:
             sale_price = rec.get("price") or rec.get("amount")
@@ -489,15 +639,18 @@ def investor_snapshot_by_zpid(zpid: str,
                               api_key: Optional[str] = None,
                               host: Optional[str] = None,
                               include_market: bool = True) -> Dict[str, Any]:
-    """
-    Build an 'investor snapshot' dictionary that covers buckets 1–8.
-    """
-    # Base details
     raw_details = property_details_by_zpid(zpid, api_key=api_key, host=host)
     details = normalize_details(raw_details)
     addr_bits = _address_bits(raw_details)
+    from .enrichers import enrich_details
+    # ...
+    raw_details = property_details_by_zpid(zpid, api_key=api_key, host=host)
+    details = normalize_details(raw_details)
 
-    # 1) Ownership & mortgage info (limited by API)
+    # Enrich missing bits
+    details = enrich_details(details)
+
+    # 1) Ownership & mortgage info
     pth = price_and_tax_history_by_zpid(zpid, api_key=api_key, host=host)
     last_price, last_date, purchase_method = _last_sale_from_history(pth)
     ownership_mortgage = {
@@ -514,15 +667,17 @@ def investor_snapshot_by_zpid(zpid: str,
     # 2) Property classification
     classification = _classify_type(details.get("homeType"), details.get("unitCount"))
 
-    # 3) Valuation & income potential
+    # 3) Valuation & income
     zdata = zestimate_by_zpid(zpid, api_key=api_key, host=host)
     zestimate_val = zdata.get("zestimate") if isinstance(zdata, dict) else None
     z_low = zdata.get("low") if isinstance(zdata, dict) else None
     z_high = zdata.get("high") if isinstance(zdata, dict) else None
 
     rdata = rent_estimate(addr_bits, api_key=api_key, host=host) or {}
-    rent_val = rdata.get("rentZestimate") or rdata.get("rent") or rdata.get("estimate")
-
+    rent_val = valuation_income.get("rentEstimate")
+    if not rent_val and details.get("rentEstimate"):
+        valuation_income["rentEstimate"] = details["rentEstimate"]
+    
     valuation_income = {
         "zestimate": zestimate_val,
         "zestimateRange": {"low": z_low, "high": z_high},
@@ -531,9 +686,10 @@ def investor_snapshot_by_zpid(zpid: str,
                        if (rent_val and zestimate_val and zestimate_val > 0) else None),
     }
 
-    # 4) Lot & building specs (already in details)
+    # 4) Lot & building
     lot_building = {
         "lotSize": details.get("lotSize"),
+        "lotSizeDisplay": details.get("lotSizeDisplay"),
         "livingArea": details.get("livingArea"),
         "yearBuilt": details.get("yearBuilt"),
         "constructionType": None,
@@ -549,28 +705,19 @@ def investor_snapshot_by_zpid(zpid: str,
         "keyAmenities": None,
     }
 
-    # 6) Marketability (limited w/out active listing context)
+    # 6) Marketability (limited without active listing)
     marketability = {
-        "daysOnMarket": None,  # not reliable unless tied to an active listing
+        "daysOnMarket": None,
         "previousListingHistory": None,
         "hoa": None,
         "rentalRestrictions": None,
     }
 
-    # 7) Repair & rehab (requires manual input or MLS enrich)
-    rehab = {
-        "condition": None,
-        "estimatedRehabCost": None,
-        "photos": None,
-    }
+    # 7) Repair & rehab
+    rehab = {"condition": None, "estimatedRehabCost": None, "photos": None}
 
-    # 8) Exit strategy flags (basic heuristics)
-    exit_flags = {
-        "flipPotential": None,    # needs comp/rehab logic
-        "brrrrPotential": None,   # needs DSCR + rate assumptions
-        "wholesaleSpread": None,  # needs seller ask/contract price
-        "creativeFinance": None,  # needs mortgage data
-    }
+    # 8) Exit flags (placeholder heuristics)
+    exit_flags = {"flipPotential": None, "brrrrPotential": None, "wholesaleSpread": None, "creativeFinance": None}
 
     snapshot: Dict[str, Any] = {
         "meta": {"zpid": details.get("zpid"), "fullAddress": details.get("fullAddress")},
@@ -582,7 +729,7 @@ def investor_snapshot_by_zpid(zpid: str,
         "6_marketability": marketability,
         "7_rehab": rehab,
         "8_exit_flags": exit_flags,
-        "details": details,   # include normalized details
+        "details": details,
     }
 
     if include_market:
@@ -601,9 +748,6 @@ def investor_snapshot_by_address(address: str,
                                  api_key: Optional[str] = None,
                                  host: Optional[str] = None,
                                  include_market: bool = True) -> Dict[str, Any]:
-    """
-    Address -> zpid -> snapshot
-    """
     zpid = search_address_for_zpid(address, api_key=api_key, host=host)
     if not zpid:
         raise ZillowError("No matching property/zpid found for that address.")

@@ -50,6 +50,9 @@ class Lead(db.Model):
     lead_source       = db.Column(db.String(100))
     notes             = db.Column(db.Text)
 
+    # Step2 intake (structured answers)
+    intake            = db.Column(db.JSON)
+
     # NEW – optional repair statuses
     ac_status         = db.Column(db.String(30))
     roof_status       = db.Column(db.String(30))
@@ -78,4 +81,33 @@ class Buyer(db.Model):
     min_baths         = db.Column(db.String(10))
     notes             = db.Column(db.Text)
 
+    # Step2 intake (structured answers)
+    intake            = db.Column(db.JSON)
+
     source            = db.Column(db.String(100), default="Web Form")
+
+class LeadEvent(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    lead_id = db.Column(db.Integer, db.ForeignKey('lead.id'), nullable=True)
+    kind = db.Column(db.String(50), nullable=False)
+    payload = db.Column(db.JSON, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    lead = db.relationship('Lead', backref=db.backref('events', lazy=True))
+
+
+def _safe_dict(obj, fields):
+    return {f: getattr(obj, f) for f in fields if hasattr(obj, f)}
+
+try:
+    def _lead_to_dict(self):
+        return _safe_dict(self, ['id','first_name','last_name','phone','email','lead_source','lead_status','created_at','updated_at','notes','property_id'])
+    Lead.to_dict = _lead_to_dict
+except Exception:
+    pass
+
+try:
+    def _property_to_dict(self):
+        return _safe_dict(self, ['id','address','full_address','city','state','zip_code','beds','baths','sqft','zestimate','rent_zestimate','created_at'])
+    Property.to_dict = _property_to_dict
+except Exception:
+    pass

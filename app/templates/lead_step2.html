@@ -1,70 +1,239 @@
+
 {% extends "base.html" %}
 {% block content %}
-<h2>Step 2: Property Details</h2>
-<form method="POST" enctype="multipart/form-data">
+<h2 class="mb-3">Step 2: Property Details</h2>
+<form method="POST" enctype="multipart/form-data" id="leadStep2Form">
   {{ form.hidden_tag() }}
 
+  <!-- 1 -->
+  <div class="mb-3">
+    {{ form.why_sell.label(class="form-label") }}
+    {{ form.why_sell(class="form-control", rows=2, placeholder="Divorce, relocate, inherited, tired landlord, etc.") }}
+  </div>
+
+  <!-- 2 -->
   <div class="mb-3">
     {{ form.occupancy_status.label(class="form-label") }}
-    {{ form.occupancy_status(class="form-select") }}
+    {{ form.occupancy_status(class="form-select", id="occupancy_status") }}
   </div>
 
-  <div class="row">
-    <div class="col-md-4 mb-3">
-      {{ form.condition.label(class="form-label") }}
-      {{ form.condition(class="form-select") }}
-      {% if form.condition.errors %}<div class="text-warning">{{ form.condition.errors[0] }}</div>{% endif %}
-      <div class="form-text">Required</div>
+  <div id="rentalBlock" style="display:none;">
+    <div class="mb-3">
+      {{ form.rent_amount.label(class="form-label") }}
+      {{ form.rent_amount(class="form-control", placeholder="$ per month") }}
     </div>
-    <div class="col-md-4 mb-3">
-      {{ form.timeline.label(class="form-label") }}
-      {{ form.timeline(class="form-select") }}
+    <div class="mb-3">
+      {{ form.is_multifam.label(class="form-label") }}
+      {{ form.is_multifam(class="form-select", id="is_multifam") }}
     </div>
-    <div class="col-md-4 mb-3">
-      {{ form.property_type.label(class="form-label") }}
-      {{ form.property_type(class="form-select") }}
-    </div>
-  </div>
-
-  <div class="row">
-    <div class="col-md-6 mb-3">
-      {{ form.closing_date.label(class="form-label") }}
-      {{ form.closing_date(class="form-control", type="date") }}
-    </div>
-    <div class="col-md-6 mb-3">
-      {{ form.asking_price.label(class="form-label") }}
-      {{ form.asking_price(class="form-control", placeholder="Optional") }}
+    <div id="multiBlock" style="display:none;">
+      <div class="row">
+        <div class="col-md-6 mb-3">
+          {{ form.units_count.label(class="form-label") }}
+          {{ form.units_count(class="form-control", placeholder="e.g., 4", id="units_count") }}
+        </div>
+        <div class="col-md-6 mb-3">
+          {{ form.vacant_units.label(class="form-label") }}
+          {{ form.vacant_units(class="form-control", placeholder="e.g., 1") }}
+        </div>
+      </div>
+      <div class="mb-2"><strong>2c) How much is each unit rented for?</strong></div>
+      <div id="unitRentsContainer" class="mb-3"></div>
+      {{ form.unit_rents_json(id="unit_rents_json") }}
     </div>
   </div>
 
+  <!-- 3 -->
   <div class="mb-3">
-    {{ form.reason.label(class="form-label") }}
-    {{ form.reason(class="form-control", rows=3, placeholder="Why are you looking to sell?") }}
+    {{ form.listed_with_realtor.label(class="form-label") }}
+    {{ form.listed_with_realtor(class="form-select", id="listed_with_realtor") }}
+  </div>
+  <div id="listPriceBlock" style="display:none;">
+    <div class="mb-3">
+      {{ form.list_price.label(class="form-label") }}
+      {{ form.list_price(class="form-control", placeholder="$ listing price") }}
+    </div>
   </div>
 
+  <!-- 4 -->
   <div class="mb-3">
-    <h5>Repairs (optional)</h5>
+    {{ form.condition.label(class="form-label") }}
+    {{ form.condition(class="form-select") }}
+  </div>
+
+  <!-- 5 -->
+  <div class="mb-3">
+    {{ form.repairs_needed.label(class="form-label") }}
+    {{ form.repairs_needed(class="form-control", rows=2, placeholder="Roof, HVAC, foundation, cosmetics, etc.") }}
+  </div>
+
+  <!-- 6 -->
+  <div class="mb-3">
+    {{ form.repairs_cost_est.label(class="form-label") }}
+    {{ form.repairs_cost_est(class="form-control", placeholder="$ and quick reason") }}
+  </div>
+
+  <!-- 6 (continued numbering from your spec) -->
+  <div class="mb-3">
+    {{ form.worth_estimate.label(class="form-label") }}
+    {{ form.worth_estimate(class="form-control", placeholder="$ your estimate") }}
+  </div>
+
+  <!-- 7 -->
+  <div class="mb-3">
+    {{ form.behind_on_payments.label(class="form-label") }}
+    {{ form.behind_on_payments(class="form-select", id="behind_on_payments") }}
+  </div>
+  <div id="behindBlock" style="display:none;">
     <div class="row">
-      <div class="col-md-4 mb-3">{{ form.ac_status.label(class="form-label") }} {{ form.ac_status(class="form-select") }}</div>
-      <div class="col-md-4 mb-3">{{ form.roof_status.label(class="form-label") }} {{ form.roof_status(class="form-select") }}</div>
-      <div class="col-md-4 mb-3">{{ form.foundation_status.label(class="form-label") }} {{ form.foundation_status(class="form-select") }}</div>
-      <div class="col-md-4 mb-3">{{ form.water_heater_status.label(class="form-label") }} {{ form.water_heater_status(class="form-select") }}</div>
-      <div class="col-md-4 mb-3">{{ form.electrical_status.label(class="form-label") }} {{ form.electrical_status(class="form-select") }}</div>
-      <div class="col-md-4 mb-3">{{ form.plumbing_status.label(class="form-label") }} {{ form.plumbing_status(class="form-select") }}</div>
+      <div class="col-md-6 mb-3">
+        {{ form.behind_amount.label(class="form-label") }}
+        {{ form.behind_amount(class="form-control") }}
+      </div>
+      <div class="col-md-6 mb-3">
+        {{ form.loan_balance.label(class="form-label") }}
+        {{ form.loan_balance(class="form-control") }}
+      </div>
+    </div>
+    <div class="row">
+      <div class="col-md-6 mb-3">
+        {{ form.monthly_payment.label(class="form-label") }}
+        {{ form.monthly_payment(class="form-control") }}
+      </div>
+      <div class="col-md-6 mb-3">
+        {{ form.interest_rate.label(class="form-label") }}
+        {{ form.interest_rate(class="form-control", placeholder="%") }}
+      </div>
     </div>
   </div>
 
+  <!-- 9 -->
+  <div class="mb-3">
+    {{ form.will_sell_for_amount_owed.label(class="form-label") }}
+    {{ form.will_sell_for_amount_owed(class="form-select") }}
+  </div>
+
+  <!-- 10 -->
+  <div class="mb-3">
+    {{ form.in_bankruptcy.label(class="form-label") }}
+    {{ form.in_bankruptcy(class="form-select") }}
+  </div>
+
+  <!-- 11 -->
+  <div class="mb-3">
+    {{ form.lowest_amount.label(class="form-label") }}
+    {{ form.lowest_amount(class="form-control", placeholder="$") }}
+  </div>
+
+  <!-- 12 -->
+  <div class="mb-3">
+    {{ form.flexible_price.label(class="form-label") }}
+    {{ form.flexible_price(class="form-select") }}
+  </div>
+
+  <!-- 13 -->
+  <div class="mb-3">
+    <label class="form-label">
+      13) Would you be interested in <a href="{{ url_for('main.learn_seller_financing') }}" target="_blank">seller financing</a>?
+    </label>
+    {{ form.seller_finance_interest(class="form-select") }}
+  </div>
+
+  <!-- 14 -->
+  <div class="row">
+    <div class="col-md-8 mb-3">
+      {{ form.title_others.label(class="form-label") }}
+      {{ form.title_others(class="form-control", placeholder="Spouse, sibling, etc.") }}
+    </div>
+    <div class="col-md-4 mb-3">
+      {{ form.title_others_willing.label(class="form-label") }}
+      {{ form.title_others_willing(class="form-select") }}
+    </div>
+  </div>
+
+  <!-- 15 -->
+  <div class="mb-3">
+    {{ form.how_hear_about_us.label(class="form-label") }}
+    {{ form.how_hear_about_us(class="form-select", id="how_hear_about_us") }}
+  </div>
+  <div id="hearOtherBlock" style="display:none;">
+    <div class="mb-3">
+      {{ form.how_hear_other.label(class="form-label") }}
+      {{ form.how_hear_other(class="form-control") }}
+    </div>
+  </div>
+
+  <!-- existing fields -->
   <div class="mb-3">
     {{ form.notes.label(class="form-label") }}
-    {{ form.notes(class="form-control", rows=3, placeholder="Anything else we should know?") }}
+    {{ form.notes(class="form-control", rows=3) }}
   </div>
-
   <div class="mb-3">
     {{ form.photos.label(class="form-label") }}
     {{ form.photos(class="form-control", multiple=True) }}
-    <div class="form-text">You can select multiple images (png, jpg, jpeg, webp).</div>
   </div>
 
+  {{ form.intake_payload(id="intake_payload") }}
   {{ form.submit(class="btn btn-primary") }}
 </form>
+
+<script>
+(function(){
+  const occ        = document.getElementById("occupancy_status");
+  const rentalBlk  = document.getElementById("rentalBlock");
+  const multiSel   = document.getElementById("is_multifam");
+  const multiBlk   = document.getElementById("multiBlock");
+  const unitsInput = document.getElementById("units_count");
+  const unitWrap   = document.getElementById("unitRentsContainer");
+  const listSel    = document.getElementById("listed_with_realtor");
+  const listBlk    = document.getElementById("listPriceBlock");
+  const behindSel  = document.getElementById("behind_on_payments");
+  const behindBlk  = document.getElementById("behindBlock");
+  const hearSel    = document.getElementById("how_hear_about_us");
+  const hearBlk    = document.getElementById("hearOtherBlock");
+  const form       = document.getElementById("leadStep2Form");
+  const intake     = document.getElementById("intake_payload");
+
+  function toggleRental(){ rentalBlk.style.display = (occ && occ.value === "rented") ? "" : "none"; }
+  function toggleMulti(){ multiBlk.style.display = (multiSel && multiSel.value === "yes") ? "" : "none"; }
+  function toggleList(){ listBlk.style.display = (listSel && listSel.value === "yes") ? "" : "none"; }
+  function toggleBehind(){ behindBlk.style.display = (behindSel && behindSel.value === "yes") ? "" : "none"; }
+  function toggleHearOther(){ hearBlk.style.display = (hearSel && hearSel.value === "other") ? "" : "none"; }
+
+  function rebuildUnitInputs(){
+    unitWrap.innerHTML = "";
+    const n = parseInt(unitsInput && unitsInput.value || "0", 10);
+    if (!isFinite(n) || n <= 0) return;
+    for(let i=1;i<=n;i++){
+      const div = document.createElement('div');
+      div.className = "mb-2";
+      div.innerHTML = '<label class="form-label">Unit '+i+' rent ($/mo)</label><input class="form-control unit-rent" data-unit="'+i+'" placeholder="e.g., 950">';
+      unitWrap.appendChild(div);
+    }
+  }
+
+  occ && occ.addEventListener('change', toggleRental);
+  multiSel && multiSel.addEventListener('change', toggleMulti);
+  unitsInput && unitsInput.addEventListener('input', rebuildUnitInputs);
+  listSel && listSel.addEventListener('change', toggleList);
+  behindSel && behindSel.addEventListener('change', toggleBehind);
+  hearSel && hearSel.addEventListener('change', toggleHearOther);
+
+  toggleRental(); toggleMulti(); toggleList(); toggleBehind(); toggleHearOther();
+
+  form.addEventListener('submit', function(){
+    const rents = Array.from(document.querySelectorAll('.unit-rent')).map(inp => (inp.value||'').trim());
+    const unitRentsField = document.getElementById('unit_rents_json');
+    if (unitRentsField) unitRentsField.value = JSON.stringify(rents);
+    const data = {};
+    Array.from(form.elements).forEach(el => {
+      if (!el.name || el.type === 'hidden') return;
+      if (el.tagName === 'SELECT' || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
+        data[el.name] = el.value;
+      }
+    });
+    intake.value = JSON.stringify(data);
+  });
+})();
+</script>
 {% endblock %}

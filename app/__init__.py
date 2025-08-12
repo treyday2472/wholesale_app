@@ -24,6 +24,7 @@ def _fmt_percent(val):
 
 def create_app():
     app = Flask(__name__)
+    app.config.setdefault('API_KEY', os.environ.get('API_KEY'))
     app.jinja_env.filters["currency"] = _fmt_currency
     app.jinja_env.filters["percent"] = _fmt_percent
     app.config.from_object("config.Config")
@@ -39,6 +40,9 @@ def create_app():
     register_filters(app)
     from .routes import main
     app.register_blueprint(main)
+
+    from api.routes import api as api_blueprint
+    app.register_blueprint(api_blueprint)
 
     with app.app_context():
         db.create_all()
