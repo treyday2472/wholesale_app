@@ -1,3 +1,4 @@
+# --- imports ---
 import os
 import json
 from flask import (
@@ -5,19 +6,24 @@ from flask import (
     request, flash, current_app, session
 )
 from werkzeug.utils import secure_filename
-
-from .models import Property
-from.services.investor_snapshot import build_snapshot_for_property
-from . import db
+from wtforms.validators import Optional  # <-- needed for relaxing validators
 from .forms import (
     LeadStep1Form, LeadStep2Form, UpdateStatusForm,
     BuyerStep1Form, BuyerStep2Form, PropertyForm
 )
+
+from . import db
 from .models import Lead, Buyer, Property
+from .services.investor_snapshot import build_snapshot_for_property
 from .services.property_eval import evaluate_property
-from .services.zillow_client import evaluate_address_with_marketdata, ZillowError, search_address_for_zpid, property_details_by_zpid, normalize_details
+from .services.zillow_client import (
+    evaluate_address_with_marketdata, ZillowError,
+    search_address_for_zpid, property_details_by_zpid, normalize_details
+)
 
 main = Blueprint('main', __name__)
+
+
 
 @main.route("/eval/address", methods=["GET", "POST"])
 def eval_address():
@@ -85,127 +91,170 @@ def lead_new_step1():
 
 @main.route('/lead/new/step2', methods=['GET', 'POST'])
 def lead_new_step2():
+    # Must have Step 1
     step1 = session.get('lead_step1')
     if not step1:
         flash("Please complete Step 1 first.", "warning")
-        return redirect(url_for('main.lead_new_step1'))  # <- correct endpoint
+        return redirect(url_for('main.lead_new_step1'))
 
     form = LeadStep2Form()
-    if form.validate_on_submit():
-        # photos
-        saved_files = []
-        upload_dir = current_app.config['UPLOAD_FOLDER']
-        os.makedirs(upload_dir, exist_ok=True)
-        for file in request.files.getlist('photos') or []:
-            if file and file.filename:
-                if allowed_file(file.filename):
-                    filename = secure_filename(file.filename)
-                    base, ext = os.path.splitext(filename)
-                    final = filename
-                    i = 1
-                    while os.path.exists(os.path.join(upload_dir, final)):
-                        final = f"{base}_{i}{ext}"
-                        i += 1
-                    file.save(os.path.join(upload_dir, final))
-                    saved_files.append(final)
-                else:
-                    flash(f"Unsupported file type: {file.filename}", "warning")
 
-        # create lead
-        intake_data = None
+    # initialize attempts counter once
+    if request.method == 'GET' and not (form.attempts_count.data or "").strip():
+        form.attempts_count.data = '0'
+
+    # read attempts
+    attempts = 0
+    if request.method == 'POST':
         try:
-            intake_data = json.loads(request.form.get('intake_payload') or '{}')
+            attempts = int(request.form.get('attempts_count', 0) or 0)
         except Exception:
-            intake_data = None
-        lead = Lead(
-            seller_first_name=step1['seller_first_name'],
-            seller_last_name= step1['seller_last_name'],
-            email=step1['email'],
-            phone=step1['phone'],
-            address=step1['address'],
-            occupancy_status=form.occupancy_status.data or None,
-            closing_date=(form.closing_date.data.isoformat() if form.closing_date.data else None),
-            condition=form.condition.data,
-            reason=form.reason.data,
-            timeline=form.timeline.data,
-            asking_price=form.asking_price.data,
-            property_type=form.property_type.data,
-            notes=form.notes.data,
-            ac_status=form.ac_status.data or None,
-            roof_status=form.roof_status.data or None,
-            foundation_status=form.foundation_status.data or None,
-            water_heater_status=form.water_heater_status.data or None,
-            electrical_status=form.electrical_status.data or None,
-            plumbing_status=form.plumbing_status.data or None,
-            image_files=",".join(saved_files) if saved_files else None,
-            lead_source="Web Form",
-            intake=intake_data,
-        )
-        db.session.add(lead)
-        db.session.commit()
+            attempts = 0
 
-        # auto-create property
-        full_address = step1.get('full_address') or lead.address
-        lat = step1.get('lat'); lng = step1.get('lng')
-        try:
-            lat = float(lat) if lat not in (None, "", "None") else None
-            lng = float(lng) if lng not in (None, "", "None") else None
-        except Exception:
-            lat = None; lng = None
+        # after 3 failed tries, let them submit without the required 2/3/4
+        if attempts >= 3:
+            for f in (form.occupancy_status, form.listed_with_realtor, form.condition):
+                f.validators = [Optional()]
 
-        prop = Property(
-            address=lead.address,
-            full_address=full_address,
-            lat=lat,
-            lng=lng,
-            source="from_lead",
-        )
-        db.session.add(prop)
-        db.session.commit()
+        # validate now (after maybe relaxing validators)
+        if form.validate():
+            # ---------- SAVE LEAD ----------
+            # first create the lead core record
 
-        # ---- attempt auto-evaluation (best-effort; won’t break the flow) ----
-        google_key = current_app.config.get('GOOGLE_MAPS_API_KEY', '')
-        rapid_key  = current_app.config.get('RAPIDAPI_KEY', '')
-        host       = current_app.config.get('ZILLOW_HOST', '')
-
-        try:
-            res = evaluate_property(
-                prop.address, prop.full_address, prop.lat, prop.lng,
-                google_key, rapid_key,
+            # decide condition value (default to "7" if attempts >= 3 and left blank)
+            cond_value = form.condition.data or ("7" if attempts >= 3 else None)
+            
+            lead = Lead(
+                seller_first_name = step1['seller_first_name'],
+                seller_last_name  = step1.get('seller_last_name') or None,
+                email             = step1['email'],
+                phone             = step1['phone'],
+                address           = step1['address'],
+                occupancy_status  = form.occupancy_status.data or None,
+                condition         = form.condition.data or None,
+                notes             = (form.notes.data or '').strip() or None,
+                lead_source       = "Web Form",
             )
 
-            # save results
-            prop.lat = res.get("lat")
-            prop.lng = res.get("lng")
-            prop.full_address = res.get("full_address") or prop.full_address
+            # capture all step-2 answers in one JSON blob so we don’t need
+            # columns for every intake field
+            intake = {
+                "why_sell": form.why_sell.data,
+                "occupancy_status": form.occupancy_status.data,
+                "rent_amount": form.rent_amount.data,
+                "is_multifam": form.is_multifam.data,
+                "units_count": form.units_count.data,
+                "unit_rents_json": form.unit_rents_json.data,
+                "vacant_units": form.vacant_units.data,
+                "listed_with_realtor": form.listed_with_realtor.data,
+                "list_price": form.list_price.data,
+                "condition": form.condition.data,
+                "repairs_needed": form.repairs_needed.data,
+                "repairs_cost_est": form.repairs_cost_est.data,
+                "worth_estimate": form.worth_estimate.data,
+                "behind_on_payments": form.behind_on_payments.data,
+                "behind_amount": form.behind_amount.data,
+                "loan_balance": form.loan_balance.data,
+                "monthly_payment": form.monthly_payment.data,
+                "interest_rate": form.interest_rate.data,
+                "will_sell_for_amount_owed": form.will_sell_for_amount_owed.data,
+                "in_bankruptcy": form.in_bankruptcy.data,
+                "lowest_amount": form.lowest_amount.data,
+                "flexible_price": form.flexible_price.data,
+                "seller_finance_interest": form.seller_finance_interest.data,
+                "title_others": form.title_others.data,
+                "title_others_willing": form.title_others_willing.data,
+                "how_hear_about_us": form.how_hear_about_us.data,
+                "how_hear_other": form.how_hear_other.data,
+            }
+            lead.intake = intake  # Lead.intake is a JSON/Text column in your DB
 
-            facts = res.get("facts") or {}
-            prop.zpid = facts.get("zpid")
-            prop.beds = facts.get("beds")
-            prop.baths = facts.get("baths")
-            prop.sqft = facts.get("sqft")
-            prop.lot_size = facts.get("lot_size")
-            prop.year_built = facts.get("year_built")
-            prop.school_district = facts.get("school_district")
+            db.session.add(lead)
+            db.session.commit()  # get lead.id for uploads
 
-            prop.arv_estimate = res.get("arv")
-            prop.comps_json = json.dumps(res.get("comps") or [])
-            prop.raw_json = json.dumps(facts.get("raw") or {})
+            # ---------- UPLOADS ----------
+            upload_dir = current_app.config.get('UPLOAD_FOLDER', os.path.join(current_app.static_folder, 'uploads'))
+            os.makedirs(upload_dir, exist_ok=True)
+
+            saved_files = []
+
+            # Prefer unified 'attachments'; fall back to 'photos' if present
+            files = []
+            if 'attachments' in request.files:
+                files.extend(request.files.getlist('attachments'))
+            if 'photos' in request.files:  # legacy support
+                files.extend(request.files.getlist('photos'))
+
+            for file in files:
+                if not file or not getattr(file, 'filename', ''):
+                    continue
+                filename = secure_filename(file.filename)
+                base, ext = os.path.splitext(filename)
+                final = filename
+                i = 1
+                while os.path.exists(os.path.join(upload_dir, final)):
+                    final = f"{base}_{i}{ext}"
+                    i += 1
+                file.save(os.path.join(upload_dir, final))
+                saved_files.append(final)
+
+            if saved_files:
+                # keep legacy behavior: comma-separated list in image_files
+                lead.image_files = ",".join(saved_files)
 
             db.session.commit()
-        except Exception as e:
-            current_app.logger.exception(f"Auto-evaluate property from lead failed: {e}")
 
-        session.pop('lead_step1', None)
-        flash("Thanks! Your information has been submitted.", "success")
-        return redirect(url_for('main.thank_you'))
+            # ---------- AUTO-CREATE PROPERTY + EVALUATE (best-effort) ----------
+            full_address = step1.get('full_address') or lead.address
+            lat = step1.get('lat'); lng = step1.get('lng')
+            try:
+                lat = float(lat) if lat not in (None, "", "None") else None
+                lng = float(lng) if lng not in (None, "", "None") else None
+            except Exception:
+                lat = None; lng = None
 
-    if request.method == 'POST' and not form.validate():
-        current_app.logger.error(f"Step2 validation errors: {form.errors}")
-        for field_name, errs in form.errors.items():
-            if errs:
-                flash(f"{field_name.replace('_',' ').title()}: {errs[0]}", "warning")
+            prop = Property(
+                address=lead.address,
+                full_address=full_address,
+                lat=lat, lng=lng,
+                source="from_lead",
+            )
+            db.session.add(prop)
+            db.session.commit()
 
+            try:
+                res = evaluate_property(
+                    prop.address, prop.full_address, prop.lat, prop.lng,
+                    current_app.config.get('GOOGLE_MAPS_API_KEY', ''),
+                    current_app.config.get('RAPIDAPI_KEY', '')
+                )
+                prop.lat = res.get("lat")
+                prop.lng = res.get("lng")
+                prop.full_address = res.get("full_address") or prop.full_address
+
+                facts = res.get("facts") or {}
+                prop.zpid = facts.get("zpid")
+                prop.beds = facts.get("beds")
+                prop.baths = facts.get("baths")
+                prop.sqft = facts.get("sqft")
+                prop.lot_size = facts.get("lot_size")
+                prop.year_built = facts.get("year_built")
+                prop.school_district = facts.get("school_district")
+
+                prop.arv_estimate = res.get("arv")
+                prop.comps_json = json.dumps(res.get("comps") or [])
+                prop.raw_json = json.dumps(facts.get("raw") or {})
+
+                db.session.commit()
+            except Exception as e:
+                current_app.logger.exception(f"Auto-evaluate property from lead failed: {e}")
+
+            # done
+            session.pop('lead_step1', None)
+            flash("Thanks! Your information has been submitted.", "success")
+            return redirect(url_for('main.thank_you'))
+
+    # GET or invalid POST: re-render with bound values so user can fix errors
     return render_template('lead_step2.html', form=form)
 
 @main.route('/properties/<int:property_id>/refresh', methods=['GET','POST'])
