@@ -752,3 +752,35 @@ def investor_snapshot_by_address(address: str,
     if not zpid:
         raise ZillowError("No matching property/zpid found for that address.")
     return investor_snapshot_by_zpid(zpid, api_key=api_key, host=host, include_market=include_market)
+
+
+# app/services/zillow_client.py
+from flask import current_app
+
+def zillow_basics(full_address: str) -> dict:
+    """
+    Uses your existing evaluate_address_with_marketdata() and extracts
+    only cheap 'signals' + basic structure when available.
+    """
+    try:
+        data = evaluate_address_with_marketdata(
+            full_address,
+            current_app.config.get("RAPIDAPI_KEY", ""),
+            current_app.config.get("ZILLOW_HOST", "zillow-com1.p.rapidapi.com"),
+        )
+    except Exception:
+        return {}
+
+    home = (data or {}).get("home") or {}
+    return {
+        "as_of": data.get("asOf") or data.get("date"),
+        "beds": home.get("bedrooms") or home.get("beds"),
+        "baths": home.get("bathrooms") or home.get("baths"),
+        "sqft": home.get("livingArea") or home.get("sqft"),
+        "year_built": home.get("yearBuilt"),
+        "zestimate": home.get("zestimate"),
+        "rent_zestimate": home.get("rentZestimate"),
+        "url": home.get("zillowUrl"),
+        "photos": home.get("photos") or [],
+        "raw": data,  # keep for troubleshooting
+    }

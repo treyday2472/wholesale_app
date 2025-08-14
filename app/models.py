@@ -31,6 +31,7 @@ class Property(db.Model):
 
 class Lead(db.Model):
     id = db.Column(db.Integer, primary_key=True)
+    sf_lead_id = db.Column(db.String(32), nullable=True)
 
     seller_first_name = db.Column(db.String(60))
     seller_last_name  = db.Column(db.String(60))
