@@ -135,7 +135,6 @@
     <div class="card-header">Core Facts</div>
     <div class="card-body">
       <div class="row">
-        <div class="col-md-3"><strong>ZPID:</strong> {{ meta.get('zpid') or prop.zpid or "—" }}</div>
         <div class="col-md-3"><strong>Beds:</strong> {{ details.get('bedrooms') or prop.beds or "—" }} {{ src_tag('bedrooms') }}</div>
         <div class="col-md-3"><strong>Baths:</strong> {{ details.get('bathrooms') or prop.baths or "—" }} {{ src_tag('bathrooms') }}</div>
         <div class="col-md-3"><strong>Sq Ft:</strong> {{ details.get('livingArea') or prop.sqft or "—" }} {{ src_tag('livingArea') }}</div>
@@ -144,12 +143,12 @@
         <div class="col-md-3"><strong>Lot Size:</strong> {{ lot_disp or "—" }} {{ src_tag('lotSize') }}</div>
         <div class="col-md-3"><strong>Year Built:</strong> {{ details.get('yearBuilt') or prop.year_built or "—" }} {{ src_tag('yearBuilt') }}</div>
         <div class="col-md-3">
-          <strong>Zestimate (ballpark):</strong>
+          <strong>Zestimate:</strong>
           {% set z_zest = valinc.get('zestimate') or raw_z.get('zestimate') %}
           {{ z_zest | currency if z_zest is not none else "—" }}
         </div>
         <div class="col-md-3">
-          <strong>Rent (ballpark):</strong>
+          <strong>Rent Zestimate:</strong>
           {% set r_zest = valinc.get('rentEstimate') or raw_z.get('rent_zestimate') %}
           {{ r_zest | currency if r_zest is not none else "—" }}
         </div>
@@ -168,8 +167,8 @@
     <div class="card-body">
       {% if melissa_loaded %}
         <div class="row">
-          <div class="col-md-3"><strong>Last Sold Price:</strong> {{ own.get('lastSoldPrice') | currency if own.get('lastSoldPrice') is not none else "—" }}</div>
-          <div class="col-md-3"><strong>Last Sold Date:</strong> {{ own.get('lastSoldDate') or "—" }}</div>
+          <div class="col-md-3"><strong>Last Sold Price:</strong> {{ own.get('AssessorLastSaleAmount') | currency if own.get('AssessorLastSaleAmount') is not none else "—" }}</div>
+          <div class="col-md-3"><strong>Last Sold Date:</strong> {{ own.get('AssessorLastSaleDate') or "?" }}</div>
           <div class="col-md-3"><strong>Purchase Method:</strong> {{ own.get('purchaseMethod') or "—" }}</div>
           <div class="col-md-3"><strong>Owner Occupied:</strong> {{ own.get('ownerOccupied') if own.get('ownerOccupied') is not none else "—" }}</div>
         </div>

@@ -30,22 +30,26 @@ def _get(url, params):
 
 # ---------- Lookups ----------
 
-def lookup_property(*, addr=None, a1=None, city=None, state=None, postal=None,
-                    country="US",
-                    cols="GrpProperty,GrpOwner,GrpDeed,GrpMortgage,GrpParcel",
-                    ff=True):
+def lookup_property(
+    *, addr=None, a1=None, city=None, state=None, postal=None,
+    country="US",
+    cols="GrpAll",
+    ff=None,  # Free-form address string, e.g. "710 Winston Ln Sugar Land TX"
+):
     """
-    LookupProperty supports single-line address via a1. (They also accept ff here,
-    but a1 is fine for this endpoint.)
+    LookupProperty supports:
+      - a1 + (city/state[/postal])  OR
+      - ff (free-form single line)
+    Only include 'ff' in the request if you pass an actual address string.
     """
     key  = _api_key()
     base = _cfg("MELISSA_PROP_URL", "https://property.melissadata.net/v4/WEB/LookupProperty/")
     if addr and not a1:
         a1 = addr
+
     params = {
         "id": key,
         "format": "JSON",
-        "ff": "true" if ff else "false",
         "a1": a1 or "",
         "city": city or "",
         "state": state or "",
@@ -53,6 +57,9 @@ def lookup_property(*, addr=None, a1=None, city=None, state=None, postal=None,
         "country": country or "US",
         "cols": cols or "",
     }
+    if isinstance(ff, str) and ff.strip():
+        params["ff"] = ff.strip()
+
     return _get(base, params)
 
 def lookup_deeds(*, ff=None, fips=None, apn=None, mak=None, txid=None,

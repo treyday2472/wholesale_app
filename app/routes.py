@@ -603,9 +603,13 @@ def enrich_property_melissa(property_id):
         recs = (prop_payload or {}).get("Records") or []
         fips = apn = None
         if recs:
-            parcel = (recs[0].get("Parcel") or {})
-            fips = parcel.get("FIPSCode") or None
-            apn  = parcel.get("UnformattedAPN") or parcel.get("FormattedAPN") or None
+            rec = recs[0]
+            parcel = rec.get("Parcel") or {}
+            size   = (rec.get("PropertySize") or {}).get("AreaLotSF")
+            owner  = rec.get("PrimaryOwner") or {}
+            oaddr  = rec.get("OwnerAddress") or {}
+            legal_desc = rec.get("Legal") or {}
+
 
         # 2) Deeds look-up: prefer fips+apn; else ff
         deeds_payload = None
