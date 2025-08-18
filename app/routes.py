@@ -11,6 +11,7 @@ import re
 from werkzeug.utils import secure_filename
 from wtforms.validators import Optional  # relaxing validators after 3 tries
 
+
 from . import db
 from .models import Lead, Buyer, Property
 from .forms import (
@@ -438,6 +439,7 @@ def property_detail(property_id: int):
 
     # Build unified snapshot (your existing helper)
     snapshot = build_snapshot_for_property(prop) or {}
+    
 
     # Parse raw_json once and pass it through as "raw"
     try:
@@ -445,10 +447,24 @@ def property_detail(property_id: int):
     except Exception:
         raw = {}
 
+    lead_for_prop = (Lead.query.filter(Lead.address == prop.address).order_by(Lead.id.desc()).first())
+    est_repairs = None
+    if lead_for_prop:
+        intake = lead_for_prop.intake
+        if isinstance(intake, str):
+            try: inatke = json.loads(intake)
+            except Exception: intake = {}
+        if isinstance(intake, dict):
+            est_repairs = intake.get("repairs_costs")
+
+    
+
     return render_template(
         'property_detail.html',
         prop=prop,
         snapshot=snapshot,
+        est_repairs=est_repairs,
+
         raw=raw,  # <-- important: give the template access to the raw payloads
         GOOGLE_MAPS_API_KEY=current_app.config.get('GOOGLE_MAPS_API_KEY', '')
     )
@@ -574,69 +590,67 @@ def enrich_property_melissa(property_id):
         flash("Melissa key not configured.", "warning")
         return redirect(url_for('main.property_detail', property_id=prop.id))
 
-    # Build an ff (free-form) string; also try to parse for a1/city/state/postal for LookupProperty
-    addr = prop.full_address or prop.address or ""
-    a1, city, state, postal = addr, "", "", ""
-    if "," in addr:
-        try:
-            line, tail = addr.split(",", 1)
-            parts = tail.strip().split()
-            # crude parse: CITY words then ST then ZIP
-            st = parts[-2] if len(parts) >= 2 else ""
-            z  = parts[-1] if parts and parts[-1].isdigit() else ""
-            if z:
-                city = " ".join(parts[:-2])
-                state = st
-                postal = z
-            else:
-                city = " ".join(parts[1:]) if len(parts) > 1 else parts[0]
-                state = st
-            a1 = line.strip()
-        except Exception:
-            a1 = addr
+    # 0) Build address strings
+    raw_addr = (prop.full_address or prop.address or "").strip()
+    # strip trailing country tokens that confuse simple parsers
+    raw_addr_clean = re.sub(r'\s*,?\s*(USA|United States)$', '', raw_addr, flags=re.I)
 
+    # Use our helper to split; it handles several common formats
+    a1, city, state, postal = _split_us_address(raw_addr_clean)
+
+    # 1) LookupProperty — try structured first, then fall back to free-form
+    prop_payload = None
     try:
-        # 1) Property look-up (to get Parcel/FIPS/APN + some basics)
-        prop_payload = lookup_property(a1=a1, city=city, state=state, postal=postal, country="US")
-
-        # Try to pull fips/apn for a stronger Deeds lookup
+        prop_payload = lookup_property(
+            a1=a1, city=city, state=state, postal=postal,
+            country="US", cols="GrpAll"
+        )
         recs = (prop_payload or {}).get("Records") or []
-        fips = apn = None
-        if recs:
-            rec = recs[0]
-            parcel = rec.get("Parcel") or {}
-            size   = (rec.get("PropertySize") or {}).get("AreaLotSF")
-            owner  = rec.get("PrimaryOwner") or {}
-            oaddr  = rec.get("OwnerAddress") or {}
-            legal_desc = rec.get("Legal") or {}
+        # If we only got a 'Results' stub (no Parcel/Legal/etc), retry with ff
+        needs_ff = (not recs) or (len(recs) == 1 and list(recs[0].keys()) == ["Results"])
+        if needs_ff:
+            prop_payload = lookup_property(ff=raw_addr_clean, cols="GrpAll")
+            recs = (prop_payload or {}).get("Records") or []
+    except MelissaHttpError:
+        # hard fallback to ff only
+        prop_payload = lookup_property(ff=raw_addr_clean, cols="GrpAll")
+        recs = (prop_payload or {}).get("Records") or []
 
+    # 2) Derive strong keys for deeds
+    fips = apn = None
+    if recs:
+        r0 = recs[0] or {}
+        parcel = (r0.get("Parcel") or {})
+        fips = parcel.get("FIPSCode")
+        apn  = parcel.get("UnformattedAPN") or parcel.get("FormattedAPN")
 
-        # 2) Deeds look-up: prefer fips+apn; else ff
-        deeds_payload = None
-        try:
-            if fips and apn:
-                deeds_payload = lookup_deeds(fips=fips, apn=apn)
-            else:
-                deeds_payload = lookup_deeds(ff=addr)
-        except MelissaHttpError as _mhe:
-            # still keep going with just property payload
-            current_app.logger.warning("LookupDeeds warning: %s", _mhe)
+    # 3) LookupDeeds (prefer FIPS+APN, else ff)
+    deeds_payload = None
+    try:
+        if fips and apn:
+            deeds_payload = lookup_deeds(fips=fips, apn=apn)
+        else:
+            deeds_payload = lookup_deeds(ff=raw_addr_clean)
+    except MelissaHttpError as _:
+        deeds_payload = None  # keep going with property payload
 
-        # 3) Merge raw payloads
+    # 4) Merge raw payloads into DB
+    raw = {}
+    try:
+        raw = json.loads(prop.raw_json) if prop.raw_json else {}
+    except Exception:
         raw = {}
-        try: raw = json.loads(prop.raw_json) if prop.raw_json else {}
-        except Exception: raw = {}
 
-        raw.setdefault("melissa", {})
-        raw["melissa"]["LookupProperty"] = prop_payload
-        if deeds_payload is not None:
-            raw["melissa"]["LookupDeeds"] = deeds_payload
-        prop.raw_json = json.dumps(raw)
+    raw.setdefault("melissa", {})
+    raw["melissa"]["LookupProperty"] = prop_payload
+    if deeds_payload is not None:
+        raw["melissa"]["LookupDeeds"] = deeds_payload
+    prop.raw_json = json.dumps(raw)
 
-        # 4) Normalize and promote
-        if recs:
+    # 5) Normalize + promote some columns
+    if recs:
+        try:
             norm = normalize_property_record(recs[0], deeds_payload=deeds_payload)
-
             raw = json.loads(prop.raw_json or "{}")
             raw["ownership_mortgage"] = norm.get("ownership") or {}
             raw["2_classification"]   = norm.get("classification") or {}
@@ -646,23 +660,16 @@ def enrich_property_melissa(property_id):
             raw["meta"] = meta
             prop.raw_json = json.dumps(raw)
 
-            # Optionally fill empty DB structure fields
             s = norm.get("structure") or {}
             if (prop.beds or 0) == 0 and s.get("beds"):           prop.beds = s["beds"]
             if (prop.baths or 0) == 0 and s.get("baths"):         prop.baths = s["baths"]
             if (prop.sqft or 0) == 0 and s.get("sqft"):           prop.sqft = s["sqft"]
             if (prop.year_built or 0) == 0 and s.get("year_built"): prop.year_built = s["year_built"]
+        except Exception:
+            current_app.logger.exception("Melissa normalize failed")
 
-        db.session.commit()
-        flash("Enriched from Melissa.", "success")
-
-    except MelissaHttpError as mhe:
-        current_app.logger.warning(f"Melissa enrich failed: {mhe}")
-        flash("Melissa lookup failed. Check URL/key/params.", "warning")
-    except Exception as e:
-        current_app.logger.exception("Unexpected Melissa enrich error")
-        flash("Unexpected error during Melissa enrich.", "danger")
-
+    db.session.commit()
+    flash("Enriched from Melissa.", "success")
     return redirect(url_for('main.property_detail', property_id=prop.id))
 
 @main.route('/learn/seller-financing')

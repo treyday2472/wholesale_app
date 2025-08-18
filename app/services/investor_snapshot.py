@@ -1,5 +1,5 @@
 from typing import Optional, Dict, Any
-from app.services.zillow_client import investor_snapshot_by_address, investor_snapshot_by_zpid, ZillowError
+from .zillow_client import investor_snapshot_by_address, investor_snapshot_by_zpid, ZillowError
 
 def build_snapshot_for_property(prop) -> Optional[Dict[str, Any]]:
     """

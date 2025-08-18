@@ -1,0 +1,20 @@
+// Simple HTTPie/curl examples
+
+# Health
+curl -s http://127.0.0.1:5000/api/health | jq
+
+# List leads (read-only may not require API key if you didn't set one)
+curl -s -H "X-API-Key: dev-api-key" http://127.0.0.1:5000/api/leads | jq
+
+# Create lead
+curl -s -X POST http://127.0.0.1:5000/api/leads   -H "Content-Type: application/json"   -H "X-API-Key: dev-api-key"   -d '{
+        "name": "John Seller",
+        "phone": "555-123-9999",
+        "source": "web",
+        "property": {"address": "123 Main St, Milwaukee, WI"}
+      }' | jq
+
+# Evaluate property
+curl -s -X POST http://127.0.0.1:5000/api/evaluate   -H "Content-Type: application/json"   -H "X-API-Key: dev-api-key"   -d '{
+        "facts": {"address": "123 Main St, Milwaukee, WI"}
+      }' | jq

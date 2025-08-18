@@ -1,13 +1,24 @@
+# Python caches
 __pycache__/
 *.pyc
+
+# Virtual environments
+venv/
+.venv/
+
+# Instance/runtime artifacts
 instance/
+static/uploads/
+
+# Environment files
 .env
 .env.*
-*.sqlite3
+
+# Databases
 *.db
-static/uploads/
-<<<<<<< HEAD
-venv/
-=======
-venv/
->>>>>>> 99c8cb1ed71e2083b89809f91ba7d1349120a627
+*.sqlite*
+*.sqlite3
+
+# Alembic / migrations cache
+alembic.ini
+migrations/versions/*.pyc

@@ -15,12 +15,61 @@
 {% set exitf     = snap.get('8_exit_flags', {}) %}
 {% set market    = snap.get('market') %}
 
+
 {# raw JSON payloads from DB (Zillow/Melissa kept here) #}
 {% set raw_all = raw or {} %}
 {% set raw_z   = raw_all.get('zillow', {}) %}
 {% set raw_m   = raw_all.get('melissa', {}) %}
 
-{# Ownership: prefer snapshot; else our normalized raw ownership_mortgage #}
+{# Melissa convenience: first record from LookupProperty #}
+{% set m_prop_recs = (raw_m.get('LookupProperty', {}).get('Records', [])) %}
+{% set m0          = (m_prop_recs[0] if m_prop_recs|length > 0 else {}) %}
+{% set parcel      = m0.get('Parcel', {}) %}
+{% set propnode    = m0.get('Property', {}) %}
+{% set psize       = m0.get('PropertySize', {}) %}
+{% set legal       = m0.get('Legal', {}) %}
+{% set assess      = m0.get('SaleInfo', {}) %}
+{% set taxnode     = m0.get('Tax', {}) %}
+{% set owneraddr   = m0.get('OwnerAddress', {}) %}
+{% set powner      = m0.get('PrimaryOwner', {}) %}
+{% set sowner      = m0.get('SecondaryOwner', {}) %}
+{% set valuation   = m0.get('EstimatedValue', {}) %}
+{% set propuseinfo = m0.get('PropertyUseInfo', {}) %}
+{% set roominfo    = m0.get('IntRoomInfo', {}) %}
+{% set assess      = m0.get('SaleInfo', {}) %}
+
+
+
+{# ---- Deeds: normalize to a list of records ---- #}
+{% set deeds_raw = raw_m.get('LookupDeeds') or {} %}
+{% set deeds_records = deeds_raw.get('Records') %}
+{% if deeds_records is mapping %}
+  {% set deeds_records = [deeds_records] %}
+{% elif deeds_records is not sequence %}
+  {% set deeds_records = [] %}
+{% endif %}
+{# Fallback: sometimes the payload is a single record at top-level #}
+{% if not deeds_records and deeds_raw.get('DocInfo') %}
+  {% set deeds_records = [deeds_raw] %}
+{% endif %}
+
+{# ---- Pick latest record by RecordingDate -> InstrumentDate -> Mortgage1.RecordingDate ---- #}
+{% set ns = namespace(latest=None, latest_date='') %}
+{% for rec in deeds_records %}
+  {% set di = rec.get('DocInfo', {}) %}
+  {% set recdate = di.get('RecordingDate') or di.get('InstrumentDate') or rec.get('Mortgage1', {}).get('RecordingDate') or '' %}
+  {% if recdate and recdate > ns.latest_date %}
+    {% set ns.latest_date = recdate %}
+    {% set ns.latest = rec %}
+  {% endif %}
+{% endfor %}
+{% set latest = ns.latest or {} %}
+{% set latest_date = ns.latest_date %}
+{% set m1      = latest.get('Mortgage1', {}) %}
+{% set grantor = latest.get('PrimaryGrantor', {}) %}
+{% set grantee = latest.get('PrimaryGrantee', {}) %}
+
+{# Ownership: prefer snapshot normalized; else raw #}
 {% set own = snap.get('1_ownership_mortgage') or raw_all.get('ownership_mortgage') or {} %}
 
 {# ---------- address / coords ---------- #}
@@ -47,10 +96,10 @@
 {# ---------- lot size display ---------- #}
 {% set lot_disp = details.get('lotSizeDisplay')
   or lotbld.get('lotSizeDisplay')
-  or ((details.get('lotSize') or lotbld.get('lotSize') or prop.lot_size) and
-      (((details.get('lotSize') or lotbld.get('lotSize') or prop.lot_size)|int)|string ~ ' sqft')) %}
+  or ((psize.get('AreaLotSF') or details.get('lotSize') or lotbld.get('lotSize') or prop.lot_size) and
+      (((psize.get('AreaLotSF') or details.get('lotSize') or lotbld.get('lotSize') or prop.lot_size)|int)|string ~ ' sqft')) %}
 
-{# ---------- source/as_of badge helper ---------- #}
+{# ---------- source/as_of badge helper (from snapshot meta) ---------- #}
 {% macro src_tag(field) -%}
   {%- set s = (meta.get('sources', {}).get(field) or details.get(field ~ '_source')) -%}
   {%- set d = (meta.get('as_of', {}).get(field)   or details.get(field ~ '_as_of')) -%}
@@ -61,8 +110,87 @@
   {%- endif -%}
 {%- endmacro %}
 
-{# Melissa considered "loaded" if we have any ownership keys #}
-{% set melissa_loaded = own and (own|length > 0) %}
+{# (C) Owner-Occupied: naive compare mailing vs property address #}
+{% set pa = (fulladdr or '')|lower|replace(',', '')|replace('.', '') %}
+{% set oa = ((owneraddr.get('Address','') ~ ' ' ~ owneraddr.get('City','') ~ ' ' ~ owneraddr.get('State','') ~ ' ' ~ owneraddr.get('PostalCode',''))|lower
+             |replace(',', '')|replace('.', '')) %}
+{% set owner_occupied = ('Yes' if pa and oa and (pa in oa or oa in pa) else 'No') %}
+
+{# (C) Estimated repairs passed in optionally from route #}
+{% set est_repairs = (est_repairs if est_repairs is defined and est_repairs else '') %}
+
+{# (C) ARV: prefer Zillow zestimate, else Melissa estimated/assessed #}
+{% set z_zest = valinc.get('zestimate') or raw_z.get('zestimate') %}
+{% set m_estv = valuation.get('EstimatedValue') or assess.get('AssessedValueTotal') %}
+{% set est_arv = (z_zest if z_zest is not none else m_estv) %}
+
+{# Melissa present? #}
+{% set melissa_loaded = raw_m and (m0|length > 0) %}
+
+<div class="alert alert-info" style="white-space:nowrap">
+  <strong>Raw status:</strong>
+  Zillow: {{ 'yes' if raw_z else 'no' }} |
+  Melissa: {{ 'yes' if raw_m else 'no' }}
+</div>
+<details class="mb-3">
+  <summary>Show raw keys</summary>
+  <details class="mb-3">
+  <summary><strong>Raw inspector (full payloads)</strong></summary>
+  <div class="row g-3 mt-2">
+    <div class="col-md-6">
+      <div class="card">
+        <div class="card-header">Zillow (raw_z)</div>
+        <div class="card-body p-2">
+          <pre class="small bg-light p-2 border rounded" style="max-height:420px; overflow:auto;">
+{{ raw_z | tojson(indent=2) }}
+          </pre>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-6">
+      <div class="card mb-3">
+        <div class="card-header">Melissa → LookupProperty</div>
+        <div class="card-body p-2">
+          <pre class="small bg-light p-2 border rounded" style="max-height:420px; overflow:auto;">
+{{ (raw_m.get('LookupProperty') or {}) | tojson(indent=2) }}
+          </pre>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header">Melissa → LookupDeeds</div>
+        <div class="card-body p-2">
+          <pre class="small bg-light p-2 border rounded" style="max-height:420px; overflow:auto;">
+{{ (raw_m.get('LookupDeeds') or {}) | tojson(indent=2) }}
+          </pre>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {# Optional: quick glance at first Melissa record's top-level fields #}
+  {% if m0 %}
+  <div class="card mt-3">
+    <div class="card-header">Melissa first record (m0) — top-level fields</div>
+    <div class="card-body p-0">
+      <table class="table table-sm mb-0">
+        <thead><tr><th style="width:220px;">Key</th><th>Value (JSON)</th></tr></thead>
+        <tbody>
+          {% for k, v in m0.items() %}
+            <tr>
+              <td class="text-monospace">{{ k }}</td>
+              <td><pre class="small mb-0">{{ v | tojson(indent=2) }}</pre></td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+</details>
+
+  <div>Zillow keys: {{ (raw_z.keys()|list) if raw_z else [] }}</div>
+  <div>Melissa keys: {{ (raw_m.keys()|list) if raw_m else [] }}</div>
+</details>
 
 <div class="container my-4">
 
@@ -130,239 +258,125 @@
     </div>
   </div>
 
-  <!-- Core Facts -->
+  <!-- Property Info (H) -->
   <div class="card mb-3">
-    <div class="card-header">Core Facts</div>
+    <div class="card-header">Property Info (H)</div>
     <div class="card-body">
-      <div class="row">
-        <div class="col-md-3"><strong>Beds:</strong> {{ details.get('bedrooms') or prop.beds or "—" }} {{ src_tag('bedrooms') }}</div>
-        <div class="col-md-3"><strong>Baths:</strong> {{ details.get('bathrooms') or prop.baths or "—" }} {{ src_tag('bathrooms') }}</div>
-        <div class="col-md-3"><strong>Sq Ft:</strong> {{ details.get('livingArea') or prop.sqft or "—" }} {{ src_tag('livingArea') }}</div>
+      <div class="row g-2">
+        <div class="col-md-6"><strong>Property Address</strong> (user): {{ fulladdr }}</div>
+        <div class="col-md-6"><strong>Bed/Bath</strong> (Z): {{ details.get('bedrooms') or raw_z.get('beds') or raw_z.get('bedrooms') or prop.beds or "—" }}/{{ details.get('bathrooms') or raw_z.get('baths') or raw_z.get('bathrooms') or prop.baths or "—" }}</div>
+        <div class="col-md-6"><strong>Year Built</strong> (Z): {{ details.get('yearBuilt') or raw_z.get('year_built') or prop.year_built or "—" }}</div>
+        <div class="col-md-6"><strong>Lot Size (sf)</strong> (M): {{ psize.get('AreaLotSF') or "—" }}</div>
+        <div class="col-md-6"><strong>PropertyUseGroup</strong> (M): {{ propuseinfo.get('PropertyUseGroup') or "—" }}</div>
+        <div class="col-md-6"><strong>HOA?</strong> (H): {{ marketab.get('hoa') or "—" }}</div>
+        <div class="col-md-6"><strong>ParkingGarage</strong> (M): {{ psize.get('ParkingGarage') if psize.get('ParkingGarage') is not none else "—" }}</div>
+        <div class="col-md-6"><strong>ParkingGarageArea</strong> (M): {{ psize.get('ParkingGarageArea') or "—" }}</div>
+        <div class="col-md-6"><strong>BathCount</strong> (M): {{ roominfo.get('BathCount') or m0.get('BathCount') or "—" }}</div>
+        <div class="col-md-6"><strong>BathPartialCount</strong> (M): {{ roominfo.get('BathPartialCount') or m0.get('BathPartialCount') or "—" }}</div>
       </div>
-      <div class="row mt-2">
-        <div class="col-md-3"><strong>Lot Size:</strong> {{ lot_disp or "—" }} {{ src_tag('lotSize') }}</div>
-        <div class="col-md-3"><strong>Year Built:</strong> {{ details.get('yearBuilt') or prop.year_built or "—" }} {{ src_tag('yearBuilt') }}</div>
-        <div class="col-md-3">
-          <strong>Zestimate:</strong>
-          {% set z_zest = valinc.get('zestimate') or raw_z.get('zestimate') %}
-          {{ z_zest | currency if z_zest is not none else "—" }}
+    </div>
+  </div>
+
+  <!-- Ownership (H) -->
+  <div class="card mb-3">
+    <div class="card-header">Ownership (H)</div>
+    <div class="card-body">
+      <div class="row g-2">
+        <div class="col-md-6"><strong>Primary Owner</strong> (M): {{ powner.get('Name1Full') }}{% if powner.get('Name2Full') %} / {{ powner.get('Name2Full') }}{% endif %}</div>
+        <div class="col-md-6"><strong>Secondary Owner</strong> (M): {{ sowner.get('Name3Full') or "—" }}</div>
+        <div class="col-md-6"><strong>Primary Grantor</strong> (M): {{ legal.get('PrimaryGrantor') or "—" }}</div>
+        <div class="col-md-6"><strong>Secondary Grantor</strong> (M): {{ legal.get('SecondaryGrantor') or "—" }}</div>
+        <div class="col-md-6"><strong>Owner's Address</strong> (M): {{ owneraddr.get('Address') }} {{ owneraddr.get('Address2') }} {{ owneraddr.get('City') }} {{ owneraddr.get('State') }} {{ owneraddr.get('PostalCode') }}</div>
+        <div class="col-md-6"><strong>Owner Occupied</strong> (C): {{ owner_occupied }}</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tax (H) -->
+  <div class="card mb-3">
+    <div class="card-header">Tax (H)</div>
+    <div class="card-body">
+      <div class="row g-2">
+        <div class="col-md-4"><strong>YearAssessed</strong> (M): {{ taxnode.get('YearAssessed') or "—" }}</div>
+        <div class="col-md-4"><strong>AssessedValueTotal</strong> (M): {{ taxnode.get('AssessedValueTotal') | currency if taxnode.get('AssessedValueTotal') is not none else "—" }}</div>
+        <div class="col-md-4"><strong>TaxBilledAmount</strong> (M): {{ taxnode.get('TaxBilledAmount') | currency if taxnode.get('TaxBilledAmount') is not none else "—" }}</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Title (H) -->
+  <div class="card mb-3">
+    <div class="card-header">Title (H)</div>
+    <div class="card-body">
+      <div class="row g-2">
+        <div class="col-md-12"><strong>LegalDescription</strong> (M): {{ legal.get('LegalDescription') or "—" }}</div>
+        <div class="col-md-4"><strong>County</strong> (M): {{ legal.get('County') or parcel.get('County') or "—" }}</div>
+        <div class="col-md-4"><strong>Subdivision</strong> (M): {{ legal.get('Subdivision') or "—" }}</div>
+        <div class="col-md-2"><strong>Block1</strong> (M): {{ legal.get('Block1') or "—" }}</div>
+        <div class="col-md-2"><strong>LotNumber1</strong> (M): {{ legal.get('LotNumber1') or "—" }}</div>
+      </div>
+    </div>
+  </div>
+
+<!-- Mortgage Info (H) -->
+<!-- Mortgage Info (H) -->
+<div class="card mb-3">
+  <div class="card-header">Mortgage Info (H)</div>
+  <div class="card-body">
+    {% if latest %}
+      <div class="row g-2">
+        <div class="col-md-6"><strong>Mortgage1 – TermDate</strong> (M): {{ m1.get('TermDate') or "—" }}</div>
+        <div class="col-md-6"><strong>Mortgage1 – RecordingDate</strong> (M): {{ m1.get('RecordingDate') or "—" }}</div>
+        <div class="col-md-6"><strong>Mortgage1 – Amount</strong> (M):
+          {% if m1.get('Amount') %}{{ (m1.get('Amount')|int) | currency }}{% else %}—{% endif %}
         </div>
-        <div class="col-md-3">
-          <strong>Rent Zestimate:</strong>
-          {% set r_zest = valinc.get('rentEstimate') or raw_z.get('rent_zestimate') %}
-          {{ r_zest | currency if r_zest is not none else "—" }}
-        </div>
+        <div class="col-md-6"><strong>Mortgage1 – LenderFullName</strong> (M): {{ m1.get('LenderFullName') or "—" }}</div>
+        <div class="col-md-6"><strong>PrimaryGrantor – Name1Full</strong> (M): {{ grantor.get('Name1Full') or "—" }}</div>
+        <div class="col-md-6"><strong>PrimaryGrantee – Name1Full</strong> (M): {{ grantee.get('Name1Full') or "—" }}</div>
       </div>
-    </div>
+      <div class="text-muted small mt-2">Latest deed by RecordingDate: {{ latest_date or "—" }}</div>
+    {% else %}
+      <div class="text-muted">No deed records available.</div>
+    {% endif %}
   </div>
-
-  <!-- 1) Ownership & Mortgage -->
-  <div class="card mb-3">
-    <div class="card-header">
-      1) Ownership & Mortgage
-      {% if not melissa_loaded %}
-        <span class="badge bg-warning text-dark ms-2">Load with Melissa</span>
-      {% endif %}
-    </div>
-    <div class="card-body">
-      {% if melissa_loaded %}
-        <div class="row">
-          <div class="col-md-3"><strong>Last Sold Price:</strong> {{ own.get('AssessorLastSaleAmount') | currency if own.get('AssessorLastSaleAmount') is not none else "—" }}</div>
-          <div class="col-md-3"><strong>Last Sold Date:</strong> {{ own.get('AssessorLastSaleDate') or "?" }}</div>
-          <div class="col-md-3"><strong>Purchase Method:</strong> {{ own.get('purchaseMethod') or "—" }}</div>
-          <div class="col-md-3"><strong>Owner Occupied:</strong> {{ own.get('ownerOccupied') if own.get('ownerOccupied') is not none else "—" }}</div>
-        </div>
-        <div class="row mt-2">
-          <div class="col-md-3"><strong>Mortgage Amount:</strong> {{ own.get('mortgageAmount') | currency if own.get('mortgageAmount') is not none else "—" }}</div>
-          <div class="col-md-3"><strong>Mortgage Type:</strong> {{ own.get('mortgageType') or "—" }}</div>
-          <div class="col-md-3"><strong>Lender:</strong> {{ own.get('lender') or "—" }}</div>
-          <div class="col-md-3"><strong>Origination Date:</strong> {{ own.get('mortgageOriginationDate') or "—" }}</div>
-        </div>
-      {% else %}
-        <div class="text-muted">Click “Get more info (Melissa)” to load deed/mortgage data.</div>
-      {% endif %}
-    </div>
-  </div>
-
-  <!-- 2) Property Classification -->
-  <div class="card mb-3">
-    <div class="card-header">2) Property Classification</div>
-    <div class="card-body">
-      <div class="row">
-        <div class="col-md-4"><strong>Raw Type:</strong> {{ cls.get('propertyTypeRaw') or "—" }}</div>
-        <div class="col-md-4"><strong>Classification:</strong> {{ cls.get('classification') or "—" }}</div>
-        <div class="col-md-4"><strong>Unit Count:</strong> {{ cls.get('unitCount') or "—" }}</div>
-      </div>
-    </div>
-  </div>
-
-  <!-- 3) Valuation & Income -->
-  <div class="card mb-3">
-    <div class="card-header">3) Valuation & Income</div>
-    <div class="card-body">
-      <div class="row">
-        <div class="col-md-3"><strong>Zestimate:</strong> {{ (valinc.get('zestimate') or raw_z.get('zestimate')) | currency if (valinc.get('zestimate') or raw_z.get('zestimate')) is not none else "—" }}</div>
-        <div class="col-md-3">
-          <strong>Range:</strong>
-          {% set zr = valinc.get('zestimateRange', {}) %}
-          {% if zr.get('low') is not none and zr.get('high') is not none %}
-            {{ zr.get('low') | currency }} – {{ zr.get('high') | currency }}
-          {% else %}
-            —
-          {% endif %}
-        </div>
-        <div class="col-md-3"><strong>Rent Estimate:</strong> {{ (valinc.get('rentEstimate') or raw_z.get('rent_zestimate')) | currency if (valinc.get('rentEstimate') or raw_z.get('rent_zestimate')) is not none else "—" }}</div>
-        <div class="col-md-3"><strong>Gross Yield:</strong> {{ valinc.get('grossYield') | percent if valinc.get('grossYield') is not none else "—" }}</div>
-      </div>
-    </div>
-  </div>
-
-  <!-- 4) Lot & Building -->
-  <div class="card mb-3">
-    <div class="card-header">4) Lot & Building</div>
-    <div class="card-body">
-      <div class="row">
-        <div class="col-md-3"><strong>Lot Size:</strong> {{ lot_disp or "—" }}</div>
-        <div class="col-md-3"><strong>Living Area:</strong> {{ lotbld.get('livingArea') or details.get('livingArea') or prop.sqft or "—" }}</div>
-        <div class="col-md-3"><strong>Year Built:</strong> {{ lotbld.get('yearBuilt') or details.get('yearBuilt') or prop.year_built or "—" }}</div>
-        <div class="col-md-3"><strong>Construction:</strong> {{ lotbld.get('constructionType') or "—" }}</div>
-      </div>
-    </div>
-  </div>
-
-  <!-- 5) Location Desirability -->
-  <div class="card mb-3">
-    <div class="card-header">5) Location Desirability</div>
-    <div class="card-body">
-      <div class="row">
-        <div class="col-md-4"><strong>School District:</strong> {{ loc.get('schoolDistrict') or details.get('schoolDistrict') or prop.school_district or "—" }}</div>
-        <div class="col-md-4"><strong>Walk/Transit Score:</strong>
-          {% set w = loc.get('walkTransit') %}
-          {% if w is mapping %}
-            {% set ws = w.get('walkScore') %}{% set ts = w.get('transitScore') %}
-            {% if ws or ts %}Walk {{ ws or "—" }} / Transit {{ ts or "—" }}{% else %}—{% endif %}
-          {% else %}{{ w or "—" }}{% endif %}
-        </div>
-        <div class="col-md-4"><strong>Crime Rating:</strong> {{ loc.get('crimeRating') or "—" }}</div>
-      </div>
-    </div>
-  </div>
-
-  <!-- 6) Marketability -->
-  <div class="card mb-3">
-    <div class="card-header">6) Marketability</div>
-    <div class="card-body">
-      <div class="row">
-        <div class="col-md-3"><strong>Days on Market:</strong> {{ marketab.get('daysOnMarket') or "—" }}</div>
-        <div class="col-md-3"><strong>Prev Listings:</strong> {{ marketab.get('previousListingHistory') or "—" }}</div>
-        <div class="col-md-3"><strong>HOA:</strong> {{ marketab.get('hoa') or "—" }}</div>
-        <div class="col-md-3"><strong>Rental Restrictions:</strong> {{ marketab.get('rentalRestrictions') or "—" }}</div>
-      </div>
-    </div>
-  </div>
-
-  <!-- 7) Repair & Rehab -->
-  <div class="card mb-3">
-    <div class="card-header">7) Repair & Rehab</div>
-    <div class="card-body">
-      <div><strong>Condition:</strong> {{ rehab.get('condition') or "—" }}</div>
-      <div class="mt-2"><strong>Estimated Rehab Cost:</strong> {{ rehab.get('estimatedRehabCost') | currency if rehab.get('estimatedRehabCost') is not none else "—" }}</div>
-    </div>
-  </div>
-
-  <!-- 8) Exit Strategy Flags -->
-  <div class="card mb-3">
-    <div class="card-header">8) Exit Strategy Flags</div>
-    <div class="card-body">
-      <div class="row">
-        <div class="col-md-3"><strong>Flip Potential:</strong> {{ exitf.get('flipPotential') or "—" }}</div>
-        <div class="col-md-3"><strong>BRRRR Potential:</strong> {{ exitf.get('brrrrPotential') or "—" }}</div>
-        <div class="col-md-3"><strong>Wholesale Spread:</strong> {{ exitf.get('wholesaleSpread') or "—" }}</div>
-        <div class="col-md-3"><strong>Creative Finance:</strong> {{ exitf.get('creativeFinance') or "—" }}</div>
-      </div>
-    </div>
-  </div>
-
-  {% if market %}
-  <div class="card mb-4">
-    <div class="card-header">Market (ZIP)</div>
-    <div class="card-body">
-      <div class="row">
-        <div class="col-md-3"><strong>Median Rent:</strong> {{ market.get('medianRent') | currency if market.get('medianRent') is not none else "—" }}</div>
-        <div class="col-md-3"><strong>Avg Days on Market:</strong> {{ market.get('avgDaysOnMarket') or "—" }}</div>
-        <div class="col-md-3"><strong>Available Rentals:</strong> {{ market.get('availableRentals') or "—" }}</div>
-        <div class="col-md-3"><strong>Temp:</strong> {{ market.get('temperature') or "—" }}</div>
-      </div>
-    </div>
-  </div>
-  {% endif %}
-
-  <!-- Quick Evaluate -->
-  <button id="btnEvaluate" class="btn btn-primary">Evaluate Strategies</button>
-  <div id="evalResults" class="mt-3" data-eval-url="{{ url_for('api.evaluate') }}"></div>
 </div>
 
-<script>
-(function(){
-  const btn = document.getElementById('btnEvaluate');
-  const out = document.getElementById('evalResults');
-  if(!btn || !out) return;
 
-  const evalUrl = out.dataset.evalUrl;
+  <!-- Sale Info (H) -->
+  <div class="card mb-3">
+    <div class="card-header">Sale Info (H)</div>
+    <div class="card-body">
+      {% set sale_last_date = assess.get('AssessorLastSaleDate') or (m0.get('Sale', {}) ).get('LastSaleDate') %}
+      {% set sale_last_amt  = assess.get('AssessorLastSaleAmount') or (m0.get('Sale', {}) ).get('LastSaleAmount') %}
+      <div class="row g-2">
+        <div class="col-md-6"><strong>AssessorLastSaleDate</strong> (M): {{ sale_last_date or "—" }}</div>
+        <div class="col-md-6"><strong>AssessorLastSaleAmount</strong> (M): {{ sale_last_amt | currency if sale_last_amt is not none else "—" }}</div>
+      </div>
+    </div>
+  </div>
 
-  function money(n){
-    if(n==null || isNaN(n)) return '—';
-    return '$' + Number(n).toLocaleString();
-  }
+  <!-- Estimates (H) -->
+  <div class="card mb-3">
+    <div class="card-header">Estimates (H)</div>
+    <div class="card-body">
+      <div class="row g-2">
+        <div class="col-md-3"><strong>Zestimate</strong> (Z): {{ raw_z.get('zestimate') | currency if raw_z.get('zestimate') is not none else "—" }}</div>
+        <div class="col-md-3"><strong>Rent Zestimate</strong> (Z): {{ raw_z.get('rent_zestimate') | currency if raw_z.get('rent_zestimate') is not none else "—" }}</div>
+        <div class="col-md-3"><strong>Estimated Melissa Value</strong> (M): {{ valuation.get('EstimatedValue') | currency if valuation.get('EstimatedValue') is not none else (assess.get('AssessedValueTotal') | currency if assess.get('AssessedValueTotal') is not none else "—") }}</div>
+        <div class="col-md-3"><strong>Estimated Repairs</strong> (C): {{ est_repairs if est_repairs else "—" }}</div>
+      </div>
+      <div class="row g-2 mt-2">
+        <div class="col-md-3"><strong>Estimated ARV</strong> (C): {{ est_arv | currency if est_arv is not none else "—" }}</div>
+      </div>
+    </div>
+  </div>
 
-  btn.addEventListener('click', async () => {
-    out.textContent = 'Calculating...';
-
-    const arv   = {{ (valinc.get('zestimate') or raw_z.get('zestimate') or prop.arv_estimate or 0) | int }};
-    const mrent = {{ (valinc.get('rentEstimate') or raw_z.get('rent_zestimate') or 0) | int }};
-
-    const facts = {
-      arv: arv,
-      repairs: 0,
-      monthly_taxes: 0,
-      insurance: 0,
-      market_rent: mrent,
-      assumptions: {}
-    };
-
-    try{
-      const res = await fetch(evalUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ facts })
-      });
-      const data = await res.json();
-      const base = data.base || {};
-      const ex   = data.exits || {};
-
-      out.innerHTML = `
-        <div class="card card-body">
-          <h5>Base</h5>
-          <div>ARV: ${money(base.arv)} | Repairs: ${money(base.repairs)} | MAO: ${money(base.mao_cash)} | Wholetail: ${money(base.wholetail_offer)}</div>
-          <hr/>
-          <h5>Wholesale</h5>
-          <div>64% Offer: ${money(ex.wholesale?.suggested_cash_offer_64_rule)}</div>
-          <h5>Flip</h5>
-          <div>End Buyer: ${money(ex.flip?.end_buyer_sale_price)} | Loan Costs: ${money(ex.flip?.loan_costs)}</div>
-          <h5>Owner Finance</h5>
-          <div>A Price: ${money(ex.owner_finance?.A?.price)} | P&I: ${money(ex.owner_finance?.A?.monthly_payment_pi)}</div>
-          <div>B Price: ${money(ex.owner_finance?.B?.price)} | P&I: ${money(ex.owner_finance?.B?.monthly_payment_pi)}</div>
-          <div>C Price: ${money(ex.owner_finance?.C?.price)} | P&I: ${money(ex.owner_finance?.C?.monthly_payment_pi)}</div>
-          <div>D Price: ${money(ex.owner_finance?.D?.price)} | P&I: ${money(ex.owner_finance?.D?.monthly_payment_pi)}</div>
-          <h5>Lease Option</h5>
-          <div>Strike: ${money(ex.lease_option?.strike_price)} | Option Fee: ${money(ex.lease_option?.option_fee)} | Monthly Credit: ${money(ex.lease_option?.monthly_credit)} | Exercise Cash: ${money(ex.lease_option?.cash_needed_on_exercise)}</div>
-          <h5>Land</h5>
-          <div>Est Value: ${money(ex.land?.est_value)} | Wholesale Offer: ${money(ex.land?.wholesale_offer)} | Retail: ${money(ex.land?.retail_price)}</div>
-        </div>`;
-    }catch(e){
-      out.textContent = 'Error: ' + e;
-    }
-  });
-})();
-</script>
+  <!-- Comps (placeholder) -->
+  <div class="card mb-4">
+    <div class="card-header">Comps</div>
+    <div class="card-body">
+      <div class="text-muted">Comps logic will be added later.</div>
+    </div>
+  </div>
+</div>
 {% endblock %}
