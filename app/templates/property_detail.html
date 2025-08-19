@@ -15,20 +15,18 @@
 {% set exitf     = snap.get('8_exit_flags', {}) %}
 {% set market    = snap.get('market') %}
 
+{# ---------- raw payloads from DB ---------- #}
+{% set raw_all   = raw or {} %}
+{% set raw_z     = raw_all.get('zillow', {}) %}
+{% set raw_m     = raw_all.get('melissa', {}) %}
+{% set raw_attom = raw_all.get('attom', {}) %}
 
-{# raw JSON payloads from DB (Zillow/Melissa kept here) #}
-{% set raw_all = raw or {} %}
-{% set raw_z   = raw_all.get('zillow', {}) %}
-{% set raw_m   = raw_all.get('melissa', {}) %}
-
-{# Melissa convenience: first record from LookupProperty #}
+{# ---------- Melissa convenience: first LookupProperty record ---------- #}
 {% set m_prop_recs = (raw_m.get('LookupProperty', {}).get('Records', [])) %}
 {% set m0          = (m_prop_recs[0] if m_prop_recs|length > 0 else {}) %}
 {% set parcel      = m0.get('Parcel', {}) %}
-{% set propnode    = m0.get('Property', {}) %}
 {% set psize       = m0.get('PropertySize', {}) %}
 {% set legal       = m0.get('Legal', {}) %}
-{% set assess      = m0.get('SaleInfo', {}) %}
 {% set taxnode     = m0.get('Tax', {}) %}
 {% set owneraddr   = m0.get('OwnerAddress', {}) %}
 {% set powner      = m0.get('PrimaryOwner', {}) %}
@@ -36,11 +34,32 @@
 {% set valuation   = m0.get('EstimatedValue', {}) %}
 {% set propuseinfo = m0.get('PropertyUseInfo', {}) %}
 {% set roominfo    = m0.get('IntRoomInfo', {}) %}
-{% set assess      = m0.get('SaleInfo', {}) %}
+{% set m_saleinfo  = m0.get('SaleInfo', {}) %}
+
+{# ATTOM extracts for convenience #}
+{% set attx = raw_all.get('attom_extract') or {} %}
+{% set ax   = attx.get('avm') or {} %}
+{% set rx   = attx.get('rent_avm') or {} %}
+
+
+{# Fallback to raw rental payload if extract not present #}
+{% if not rx and (raw_attom.get('rental_avm') or {}).get('property') %}
+  {% set rprop = (raw_attom.get('rental_avm').get('property') or [])[0] %}
+  {% if rprop %}
+    {% set rnode = rprop.get('rentalAvm', {}) %}
+    {% set rx = {
+      'value': rnode.get('estimatedRentalValue'),
+      'low':   rnode.get('estimatedMinRentalValue'),
+      'high':  rnode.get('estimatedMaxRentalValue'),
+      'as_of': rnode.get('valuationDate'),
+    } %}
+  {% endif %}
+{% endif %}
 
 
 
-{# ---- Deeds: normalize to a list of records ---- #}
+
+{# ---------- Deeds: normalize to list and pick latest ---------- #}
 {% set deeds_raw = raw_m.get('LookupDeeds') or {} %}
 {% set deeds_records = deeds_raw.get('Records') %}
 {% if deeds_records is mapping %}
@@ -48,12 +67,11 @@
 {% elif deeds_records is not sequence %}
   {% set deeds_records = [] %}
 {% endif %}
-{# Fallback: sometimes the payload is a single record at top-level #}
 {% if not deeds_records and deeds_raw.get('DocInfo') %}
   {% set deeds_records = [deeds_raw] %}
 {% endif %}
 
-{# ---- Pick latest record by RecordingDate -> InstrumentDate -> Mortgage1.RecordingDate ---- #}
+{# pick latest by DocInfo.RecordingDate -> DocInfo.InstrumentDate -> Mortgage1.RecordingDate #}
 {% set ns = namespace(latest=None, latest_date='') %}
 {% for rec in deeds_records %}
   {% set di = rec.get('DocInfo', {}) %}
@@ -63,13 +81,16 @@
     {% set ns.latest = rec %}
   {% endif %}
 {% endfor %}
-{% set latest = ns.latest or {} %}
+{% set latest      = ns.latest or {} %}
 {% set latest_date = ns.latest_date %}
-{% set m1      = latest.get('Mortgage1', {}) %}
-{% set grantor = latest.get('PrimaryGrantor', {}) %}
-{% set grantee = latest.get('PrimaryGrantee', {}) %}
+{% set m1          = latest.get('Mortgage1', {}) %}
+{% set grantor     = latest.get('PrimaryGrantor', {}) %}
+{% set grantee     = latest.get('PrimaryGrantee', {}) %}
 
-{# Ownership: prefer snapshot normalized; else raw #}
+
+
+
+{# ---------- Ownership (normalized fallback) ---------- #}
 {% set own = snap.get('1_ownership_mortgage') or raw_all.get('ownership_mortgage') or {} %}
 
 {# ---------- address / coords ---------- #}
@@ -99,7 +120,7 @@
   or ((psize.get('AreaLotSF') or details.get('lotSize') or lotbld.get('lotSize') or prop.lot_size) and
       (((psize.get('AreaLotSF') or details.get('lotSize') or lotbld.get('lotSize') or prop.lot_size)|int)|string ~ ' sqft')) %}
 
-{# ---------- source/as_of badge helper (from snapshot meta) ---------- #}
+{# ---------- source/as_of badge helper ---------- #}
 {% macro src_tag(field) -%}
   {%- set s = (meta.get('sources', {}).get(field) or details.get(field ~ '_source')) -%}
   {%- set d = (meta.get('as_of', {}).get(field)   or details.get(field ~ '_as_of')) -%}
@@ -110,32 +131,43 @@
   {%- endif -%}
 {%- endmacro %}
 
-{# (C) Owner-Occupied: naive compare mailing vs property address #}
+{# ---------- owner-occupied heuristic ---------- #}
 {% set pa = (fulladdr or '')|lower|replace(',', '')|replace('.', '') %}
 {% set oa = ((owneraddr.get('Address','') ~ ' ' ~ owneraddr.get('City','') ~ ' ' ~ owneraddr.get('State','') ~ ' ' ~ owneraddr.get('PostalCode',''))|lower
              |replace(',', '')|replace('.', '')) %}
 {% set owner_occupied = ('Yes' if pa and oa and (pa in oa or oa in pa) else 'No') %}
 
-{# (C) Estimated repairs passed in optionally from route #}
+{# ---------- optional est repairs from route ---------- #}
 {% set est_repairs = (est_repairs if est_repairs is defined and est_repairs else '') %}
 
-{# (C) ARV: prefer Zillow zestimate, else Melissa estimated/assessed #}
+{# ---------- ARV helper ---------- #}
 {% set z_zest = valinc.get('zestimate') or raw_z.get('zestimate') %}
-{% set m_estv = valuation.get('EstimatedValue') or assess.get('AssessedValueTotal') %}
+{% set m_estv = valuation.get('EstimatedValue') or taxnode.get('AssessedValueTotal') %}
 {% set est_arv = (z_zest if z_zest is not none else m_estv) %}
 
-{# Melissa present? #}
+{# ---------- loaded flags ---------- #}
 {% set melissa_loaded = raw_m and (m0|length > 0) %}
+{% set attom_loaded   = raw_attom is mapping and (raw_attom|length > 0) %}
 
 <div class="alert alert-info" style="white-space:nowrap">
   <strong>Raw status:</strong>
   Zillow: {{ 'yes' if raw_z else 'no' }} |
-  Melissa: {{ 'yes' if raw_m else 'no' }}
+  Melissa: {{ 'yes' if raw_m else 'no' }} |
+  ATTOM: {{ 'yes' if attom_loaded else 'no' }}
 </div>
+
 <details class="mb-3">
   <summary>Show raw keys</summary>
-  <details class="mb-3">
-  <summary><strong>Raw inspector (full payloads)</strong></summary>
+
+  <div class="card mt-3">
+    <div class="card-header">ATTOM (raw_attom)</div>
+    <div class="card-body p-2">
+      <pre class="small bg-light p-2 border rounded" style="max-height:420px; overflow:auto;">
+{{ (raw_all.get('attom') or {}) | tojson(indent=2) }}
+      </pre>
+    </div>
+  </div>
+
   <div class="row g-3 mt-2">
     <div class="col-md-6">
       <div class="card">
@@ -167,7 +199,6 @@
     </div>
   </div>
 
-  {# Optional: quick glance at first Melissa record's top-level fields #}
   {% if m0 %}
   <div class="card mt-3">
     <div class="card-header">Melissa first record (m0) — top-level fields</div>
@@ -186,19 +217,19 @@
     </div>
   </div>
   {% endif %}
-</details>
 
-  <div>Zillow keys: {{ (raw_z.keys()|list) if raw_z else [] }}</div>
+  <div class="mt-3">Zillow keys: {{ (raw_z.keys()|list) if raw_z else [] }}</div>
   <div>Melissa keys: {{ (raw_m.keys()|list) if raw_m else [] }}</div>
+  <div>ATTOM keys: {{ (raw_attom.keys()|list) if attom_loaded else [] }}</div>
 </details>
 
 <div class="container my-4">
-
   <div class="d-flex justify-content-between align-items-center mb-3">
     <h2 class="mb-0">{{ fulladdr }}</h2>
     <div class="d-flex gap-2">
       <a class="btn btn-sm btn-secondary" href="{{ url_for('main.properties_list') }}">Back</a>
 
+      {# Melissa #}
       <form method="POST" action="{{ url_for('main.enrich_property_melissa', property_id=prop.id) }}" class="d-inline">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         {% if not melissa_loaded %}
@@ -208,6 +239,17 @@
         {% endif %}
       </form>
 
+    {# ATTOM — SINGLE BUTTON, VISIBLE COLOR #}
+      <form method="POST" action="{{ url_for('main.enrich_attom', property_id=prop.id) }}" class="d-inline">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="btn btn-sm btn-warning" type="submit">
+          {% set raw_attom = (raw or {}).get('attom') or {} %}
+          {% set attom_loaded = raw_attom.get('avm') or raw_attom.get('detail') %}
+          {% if attom_loaded %}Refresh ATTOM{% else %}Get more info (ATTOM){% endif %}
+        </button>
+      </form>
+
+      {# Zillow #}
       <form method="POST" action="{{ url_for('main.property_refresh', property_id=prop.id) }}" class="d-inline">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <button class="btn btn-sm btn-outline-secondary" type="submit">Refresh Zillow</button>
@@ -284,8 +326,6 @@
       <div class="row g-2">
         <div class="col-md-6"><strong>Primary Owner</strong> (M): {{ powner.get('Name1Full') }}{% if powner.get('Name2Full') %} / {{ powner.get('Name2Full') }}{% endif %}</div>
         <div class="col-md-6"><strong>Secondary Owner</strong> (M): {{ sowner.get('Name3Full') or "—" }}</div>
-        <div class="col-md-6"><strong>Primary Grantor</strong> (M): {{ legal.get('PrimaryGrantor') or "—" }}</div>
-        <div class="col-md-6"><strong>Secondary Grantor</strong> (M): {{ legal.get('SecondaryGrantor') or "—" }}</div>
         <div class="col-md-6"><strong>Owner's Address</strong> (M): {{ owneraddr.get('Address') }} {{ owneraddr.get('Address2') }} {{ owneraddr.get('City') }} {{ owneraddr.get('State') }} {{ owneraddr.get('PostalCode') }}</div>
         <div class="col-md-6"><strong>Owner Occupied</strong> (C): {{ owner_occupied }}</div>
       </div>
@@ -318,36 +358,34 @@
     </div>
   </div>
 
-<!-- Mortgage Info (H) -->
-<!-- Mortgage Info (H) -->
-<div class="card mb-3">
-  <div class="card-header">Mortgage Info (H)</div>
-  <div class="card-body">
-    {% if latest %}
-      <div class="row g-2">
-        <div class="col-md-6"><strong>Mortgage1 – TermDate</strong> (M): {{ m1.get('TermDate') or "—" }}</div>
-        <div class="col-md-6"><strong>Mortgage1 – RecordingDate</strong> (M): {{ m1.get('RecordingDate') or "—" }}</div>
-        <div class="col-md-6"><strong>Mortgage1 – Amount</strong> (M):
-          {% if m1.get('Amount') %}{{ (m1.get('Amount')|int) | currency }}{% else %}—{% endif %}
+  <!-- Mortgage Info (H) -->
+  <div class="card mb-3">
+    <div class="card-header">Mortgage Info (H)</div>
+    <div class="card-body">
+      {% if latest %}
+        <div class="row g-2">
+          <div class="col-md-6"><strong>Mortgage1 – TermDate</strong> (M): {{ m1.get('TermDate') or "—" }}</div>
+          <div class="col-md-6"><strong>Mortgage1 – RecordingDate</strong> (M): {{ m1.get('RecordingDate') or "—" }}</div>
+          <div class="col-md-6"><strong>Mortgage1 – Amount</strong> (M):
+            {% if m1.get('Amount') %}{{ (m1.get('Amount')|int) | currency }}{% else %}—{% endif %}
+          </div>
+          <div class="col-md-6"><strong>Mortgage1 – LenderFullName</strong> (M): {{ m1.get('LenderFullName') or "—" }}</div>
+          <div class="col-md-6"><strong>PrimaryGrantor – Name1Full</strong> (M): {{ grantor.get('Name1Full') or "—" }}</div>
+          <div class="col-md-6"><strong>PrimaryGrantee – Name1Full</strong> (M): {{ grantee.get('Name1Full') or "—" }}</div>
         </div>
-        <div class="col-md-6"><strong>Mortgage1 – LenderFullName</strong> (M): {{ m1.get('LenderFullName') or "—" }}</div>
-        <div class="col-md-6"><strong>PrimaryGrantor – Name1Full</strong> (M): {{ grantor.get('Name1Full') or "—" }}</div>
-        <div class="col-md-6"><strong>PrimaryGrantee – Name1Full</strong> (M): {{ grantee.get('Name1Full') or "—" }}</div>
-      </div>
-      <div class="text-muted small mt-2">Latest deed by RecordingDate: {{ latest_date or "—" }}</div>
-    {% else %}
-      <div class="text-muted">No deed records available.</div>
-    {% endif %}
+        <div class="text-muted small mt-2">Latest deed by RecordingDate: {{ latest_date or "—" }}</div>
+      {% else %}
+        <div class="text-muted">No deed records available.</div>
+      {% endif %}
+    </div>
   </div>
-</div>
-
 
   <!-- Sale Info (H) -->
   <div class="card mb-3">
     <div class="card-header">Sale Info (H)</div>
     <div class="card-body">
-      {% set sale_last_date = assess.get('AssessorLastSaleDate') or (m0.get('Sale', {}) ).get('LastSaleDate') %}
-      {% set sale_last_amt  = assess.get('AssessorLastSaleAmount') or (m0.get('Sale', {}) ).get('LastSaleAmount') %}
+      {% set sale_last_date = m_saleinfo.get('AssessorLastSaleDate') %}
+      {% set sale_last_amt  = m_saleinfo.get('AssessorLastSaleAmount') %}
       <div class="row g-2">
         <div class="col-md-6"><strong>AssessorLastSaleDate</strong> (M): {{ sale_last_date or "—" }}</div>
         <div class="col-md-6"><strong>AssessorLastSaleAmount</strong> (M): {{ sale_last_amt | currency if sale_last_amt is not none else "—" }}</div>
@@ -362,10 +400,29 @@
       <div class="row g-2">
         <div class="col-md-3"><strong>Zestimate</strong> (Z): {{ raw_z.get('zestimate') | currency if raw_z.get('zestimate') is not none else "—" }}</div>
         <div class="col-md-3"><strong>Rent Zestimate</strong> (Z): {{ raw_z.get('rent_zestimate') | currency if raw_z.get('rent_zestimate') is not none else "—" }}</div>
-        <div class="col-md-3"><strong>Estimated Melissa Value</strong> (M): {{ valuation.get('EstimatedValue') | currency if valuation.get('EstimatedValue') is not none else (assess.get('AssessedValueTotal') | currency if assess.get('AssessedValueTotal') is not none else "—") }}</div>
-        <div class="col-md-3"><strong>Estimated Repairs</strong> (C): {{ est_repairs if est_repairs else "—" }}</div>
-      </div>
+        <div class="col-md-3"><strong>ATTOM AVM</strong>:
+          {{ ax.get('value') | currency if ax.get('value') is not none else "—" }}
+          {% if ax.get('low') and ax.get('high') %}
+            <span class="text-muted"> ({{ ax.get('low')|currency }}–{{ ax.get('high')|currency }})</span>
+          {% endif %}
+          {% if ax.get('as_of') %}
+            <span class="badge bg-light text-muted ms-1">as of {{ ax.get('as_of') }}</span>
+          {% endif %}
+        </div>
+        <div class="col-md-3"><strong>ATTOM Rent AVM</strong>:
+          {{ rx.get('value') | currency if rx.get('value') is not none else "—" }}
+          {% if rx.get('low') and rx.get('high') %}
+            <span class="text-muted"> ({{ rx.get('low')|currency }}–{{ rx.get('high')|currency }})</span>
+          {% endif %}
+          {% if rx.get('as_of') %}
+            <span class="badge bg-light text-muted ms-1">as of {{ rx.get('as_of') }}</span>
+          {% endif %}
+        </div>
+
+
       <div class="row g-2 mt-2">
+        <div class="col-md-3"><strong>Estimated Melissa Value</strong> (M): {{ valuation.get('EstimatedValue') | currency if valuation.get('EstimatedValue') is not none else (taxnode.get('AssessedValueTotal') | currency if taxnode.get('AssessedValueTotal') is not none else "—") }}</div>
+        <div class="col-md-3"><strong>Estimated Repairs</strong> (C): {{ est_repairs if est_repairs else "—" }}</div>
         <div class="col-md-3"><strong>Estimated ARV</strong> (C): {{ est_arv | currency if est_arv is not none else "—" }}</div>
       </div>
     </div>

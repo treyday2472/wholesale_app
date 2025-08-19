@@ -17,6 +17,7 @@ class Config:
     GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY", "")
     RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY", "")
     ZILLOW_HOST = os.getenv("ZILLOW_HOST", "zillow-com1.p.rapidapi.com")
+    ATTOM_API_KEY = os.getenv("ATTOM_API_KEY", "")
 
     SF_ENABLED        = os.getenv("SF_ENABLED", "0") == "1"
     SF_AUTH_DOMAIN    = os.getenv("SF_AUTH_DOMAIN", "")  # e.g. login.salesforce.com

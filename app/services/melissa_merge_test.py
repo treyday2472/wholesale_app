@@ -80,8 +80,6 @@ def main():
             owner_name = primary_owner.get("Name1Full") or ""
             owner_name2 = primary_owner.get("Name2Full") or ""
             
-
-
             secondary_owner = r0.get("SecondaryOwner")
             owner_name3 = secondary_owner.get("Name3Full")
 

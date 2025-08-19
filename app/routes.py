@@ -6,6 +6,11 @@ from flask import (
     request, flash, current_app, session
 )
 
+from .services import attom as attom_svc
+from datetime import datetime
+
+
+from .services.attom import AttomError
 import re
 
 from werkzeug.utils import secure_filename
@@ -680,3 +685,104 @@ def learn_seller_financing():
 @main.route('/lead_form', methods=['GET'])
 def lead_form_alias():
     return redirect(url_for('main.lead_new_step1'))
+
+
+
+@main.route("/properties/<int:property_id>/enrich_attom", methods=["POST"])
+def enrich_attom(property_id):
+    prop = Property.query.get_or_404(property_id)
+
+    # Key check
+    try:
+        _ = attom_svc._key()
+    except Exception:
+        flash("ATTOM_API_KEY not configured. Set it in .env or app config.", "warning")
+        return redirect(url_for("main.property_detail", property_id=prop.id))
+
+    # Load raw container
+    try:
+        raw = json.loads(prop.raw_json) if prop.raw_json else {}
+    except Exception:
+        raw = {}
+
+    # Clean/split address (address-only; no lat/lon in params)
+    raw_addr = (prop.full_address or prop.address or "").strip()
+    raw_addr = re.sub(r"\s*,?\s*(USA|United States)$", "", raw_addr, flags=re.I)
+    a1, city, state, postal = _split_us_address(raw_addr)
+
+    # 1) Property detail (get coords + rich facts)
+    try:
+        detail_payload = attom_svc.property_detail(address1=a1, city=city, state=state, postalcode=postal)
+    except Exception as e:
+        detail_payload = {"_error": str(e)}
+
+    # Try to harvest coords & basics from detail
+    lat, lon = attom_svc.extract_detail_coords(detail_payload)
+    basics   = attom_svc.extract_detail_basics(detail_payload)
+
+    # 2) AVM + Rental AVM (ADDRESS ONLY)
+    try:
+        avm_payload = attom_svc.avm(address1=a1, city=city, state=state, postalcode=postal)
+    except Exception as e:
+        avm_payload = {"_error": str(e)}
+
+    try:
+        rent_payload = attom_svc.rental_avm(address1=a1, city=city, state=state, postalcode=postal)
+    except Exception as e:
+        rent_payload = {"_error": str(e)}
+
+    # 3) Comps — use lat/lon if both present; else address fallback
+    try:
+        if lat is not None and lon is not None:
+            comps_payload = attom_svc.sale_comps(lat=lat, lon=lon, radius_miles=1.0, last_n_months=12)
+        else:
+            comps_payload = attom_svc.sale_comps(address1=a1, city=city, state=state, postalcode=postal, radius_miles=1.0)
+    except Exception as e:
+        comps_payload = {"_error": str(e)}
+
+    # 4) Schools (address-only)
+    try:
+        schools_payload = attom_svc.detail_with_schools(address1=a1, city=city, state=state, postalcode=postal)
+    except Exception as e:
+        schools_payload = {"_error": str(e)}
+
+    # Save raw
+    raw.setdefault("attom", {})
+    raw["attom"] = {
+        "detail": detail_payload,
+        "avm": avm_payload,
+        "rental_avm": rent_payload,
+        "sale_snapshot": comps_payload,
+        "detail_with_schools": schools_payload,
+        "as_of": datetime.utcnow().strftime("%Y-%m-%d"),
+    }
+
+    # Light extracts for UI
+    v, lo, hi, avm_asof, conf = attom_svc.extract_avm_numbers(avm_payload)
+    rv, rlo, rhi, r_asof = attom_svc.extract_rental_avm_numbers(rent_payload)
+    raw["attom_extract"] = {
+        "avm": {"value": v, "low": lo, "high": hi, "as_of": avm_asof, "confidence": conf},
+        "rental_avm": {"value": rv, "low": rlo, "high": rhi, "as_of": r_asof},
+        "comps": attom_svc.extract_comps(comps_payload, max_items=10),
+        "schools": attom_svc.extract_schools(schools_payload, max_items=5),
+    }
+
+    # Promote basics into Property if blank
+    if basics:
+        prop.full_address = basics.get("fullAddress") or prop.full_address
+        if not prop.beds and basics.get("beds"): prop.beds = basics["beds"]
+        if not prop.baths and basics.get("baths"): prop.baths = basics["baths"]
+        if not prop.sqft and basics.get("sqft"): prop.sqft = basics["sqft"]
+        if not prop.year_built and basics.get("yearBuilt"): prop.year_built = basics["yearBuilt"]
+        if not prop.lat and basics.get("lat"):
+            try: prop.lat = float(basics["lat"])
+            except Exception: pass
+        if not prop.lng and basics.get("lng"):
+            try: prop.lng = float(basics["lng"])
+            except Exception: pass
+
+    prop.raw_json = json.dumps(raw)
+    db.session.add(prop)
+    db.session.commit()
+    flash("ATTOM data refreshed.", "success")
+    return redirect(url_for("main.property_detail", property_id=property_id))
