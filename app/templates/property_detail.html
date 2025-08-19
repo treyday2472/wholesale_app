@@ -36,6 +36,31 @@
 {% set roominfo    = m0.get('IntRoomInfo', {}) %}
 {% set m_saleinfo  = m0.get('SaleInfo', {}) %}
 
+{# ---- Melissa "mx" extract (value/low/high/as_of) ---- #}
+{% set mx = {} %}
+{% set _ = mx.update({
+  'value': valuation.get('EstimatedValue') 
+            or taxnode.get('AssessedValueTotal')
+}) %}
+{% set _ = mx.update({
+  'low':   valuation.get('EstimatedMinValue')
+            or valuation.get('LowValue')
+            or valuation.get('ValueRangeLow')
+            or valuation.get('ValuationRangeLow')
+}) %}
+{% set _ = mx.update({
+  'high':  valuation.get('EstimatedMaxValue')
+            or valuation.get('HighValue')
+            or valuation.get('ValueRangeHigh')
+            or valuation.get('ValuationRangeHigh')
+}) %}
+{% set _ = mx.update({
+  'as_of': valuation.get('EstimateDate')
+            or valuation.get('ValuationDate')
+            or valuation.get('Date')
+}) %}
+
+
 {# ATTOM extracts for convenience #}
 {% set attx = raw_all.get('attom_extract') or {} %}
 {% set ax   = attx.get('avm') or {} %}
@@ -394,30 +419,69 @@
   </div>
 
   <!-- Estimates (H) -->
-  <div class="card mb-3">
-    <div class="card-header">Estimates (H)</div>
-    <div class="card-body">
-      <div class="row g-2">
-        <div class="col-md-3"><strong>Zestimate</strong> (Z): {{ raw_z.get('zestimate') | currency if raw_z.get('zestimate') is not none else "—" }}</div>
-        <div class="col-md-3"><strong>Rent Zestimate</strong> (Z): {{ raw_z.get('rent_zestimate') | currency if raw_z.get('rent_zestimate') is not none else "—" }}</div>
-        <div class="col-md-3"><strong>ATTOM AVM</strong>:
-          {{ ax.get('value') | currency if ax.get('value') is not none else "—" }}
-          {% if ax.get('low') and ax.get('high') %}
-            <span class="text-muted"> ({{ ax.get('low')|currency }}–{{ ax.get('high')|currency }})</span>
-          {% endif %}
-          {% if ax.get('as_of') %}
-            <span class="badge bg-light text-muted ms-1">as of {{ ax.get('as_of') }}</span>
-          {% endif %}
-        </div>
-        <div class="col-md-3"><strong>ATTOM Rent AVM</strong>:
-          {{ rx.get('value') | currency if rx.get('value') is not none else "—" }}
-          {% if rx.get('low') and rx.get('high') %}
-            <span class="text-muted"> ({{ rx.get('low')|currency }}–{{ rx.get('high')|currency }})</span>
-          {% endif %}
-          {% if rx.get('as_of') %}
-            <span class="badge bg-light text-muted ms-1">as of {{ rx.get('as_of') }}</span>
-          {% endif %}
-        </div>
+<div class="card mb-3">
+  <div class="card-header">Estimates (H)</div>
+  <div class="card-body">
+    <div class="row g-2">
+      <div class="col-md-3"><strong>ATTOM AVM</strong>:
+        {{ ax.get('value') | currency if ax.get('value') is not none else "—" }}
+        {% if ax.get('low') and ax.get('high') %}
+          <span class="text-muted"> ({{ ax.get('low')|currency }}–{{ ax.get('high')|currency }})</span>
+        {% endif %}
+        {% if ax.get('as_of') %}
+          <span class="badge bg-light text-muted ms-1">as of {{ ax.get('as_of') }}</span>
+        {% endif %}
+      </div>
+
+      <div class="col-md-3"><strong>ATTOM Rent AVM</strong>:
+        {{ rx.get('value') | currency if rx.get('value') is not none else "—" }}
+        {% if rx.get('low') and rx.get('high') %}
+          <span class="text-muted"> ({{ rx.get('low')|currency }}–{{ rx.get('high')|currency }})</span>
+        {% endif %}
+        {% if rx.get('as_of') %}
+          <span class="badge bg-light text-muted ms-1">as of {{ rx.get('as_of') }}</span>
+        {% endif %}
+      </div>
+
+      <div class="col-md-3"><strong>Zestimate</strong> (Z):
+        {{ raw_z.get('zestimate') | currency if raw_z.get('zestimate') is not none else "—" }}
+      </div>
+
+      <div class="col-md-3"><strong>Melissa AVM</strong>:
+        {{ mx.get('value') | currency if mx.get('value') is not none else "—" }}
+        {% if mx.get('low') and mx.get('high') %}
+          <span class="text-muted"> ({{ mx.get('low')|currency }}–{{ mx.get('high')|currency }})</span>
+        {% endif %}
+        {% if mx.get('as_of') %}
+          <span class="badge bg-light text-muted ms-1">as of {{ mx.get('as_of') }}</span>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="row g-2 mt-2">
+      <div class="col-md-3"><span class="text-muted small">
+        {% if ax.get('as_of') %}AVM as of {{ ax.get('as_of') }}{% endif %}
+        {% if ax.get('confidence') %} · conf {{ ax.get('confidence') }}{% endif %}
+      </span></div>
+      <div class="col-md-3"><span class="text-muted small">
+        {% if rx.get('as_of') %}Rent AVM as of {{ rx.get('as_of') }}{% endif %}
+      </span></div>
+
+      <div class="col-md-3"><strong>Estimated Repairs</strong> (C):
+        {{ est_repairs if est_repairs else "—" }}
+      </div>
+
+      <div class="col-md-3"><strong>Estimated ARV</strong> (C):
+        {% set est_arv = ax.get('value')
+                         or raw_z.get('zestimate')
+                         or mx.get('value')
+                         or taxnode.get('AssessedValueTotal') %}
+        {{ est_arv | currency if est_arv is not none else "—" }}
+      </div>
+    </div>
+  </div>
+</div>
+
 
 
       <div class="row g-2 mt-2">
