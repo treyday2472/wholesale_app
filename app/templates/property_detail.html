@@ -325,6 +325,73 @@
     </div>
   </div>
 
+{# ---------- Activity log (supports multiple shapes) ---------- #}
+{% set activity_log = (raw_all.get('log')
+                       or raw_all.get('activity_log')
+                       or raw_all.get('attom_log')
+                       or log_entries
+                       or []) %}
+{% if activity_log is mapping %}
+  {% set activity_log = [activity_log] %}
+{% endif %}
+{% set activity_log = activity_log | sort(attribute='at', reverse=True) %}
+
+  <div class="card mb-3">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <span>Activity Log</span>
+      <span class="badge bg-light text-muted">{{ activity_log|length }} entries</span>
+    </div>
+    <div class="card-body p-0">
+      {% if activity_log %}
+        <table class="table table-sm mb-0 align-middle">
+          <thead>
+            <tr>
+              <th style="width: 160px;">Time (UTC)</th>
+              <th style="width: 90px;">Source</th>
+              <th style="width: 160px;">Event</th>
+              <th style="width: 90px;">Status</th>
+              <th>Note</th>
+              <th style="width: 120px;">Meta</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for e in activity_log %}
+              {% set ts = e.at or e.timestamp or e.time %}
+              {% set src = e.source or e.provider or '—' %}
+              {% set evt = e.event or e.action or '—' %}
+              {% set st  = e.status or e.code or e.http_status %}
+              <tr>
+                <td class="text-nowrap small">{{ ts or '—' }}</td>
+                <td class="small">{{ src }}</td>
+                <td class="small">{{ evt }}</td>
+                <td>
+                  {% if st in (200, 'ok', 'OK', 'success', 0) %}
+                    <span class="badge bg-success">OK</span>
+                  {% elif st %}
+                    <span class="badge bg-danger">{{ st }}</span>
+                  {% else %}
+                    <span class="badge bg-secondary">—</span>
+                  {% endif %}
+                </td>
+                <td class="small">{{ e.note or e.msg or e.message or '' }}</td>
+                <td class="text-monospace small">
+                  {% if e.meta %}
+                    <details>
+                      <summary class="text-muted">meta</summary>
+                      <pre class="mb-0">{{ e.meta | tojson(indent=2) }}</pre>
+                    </details>
+                  {% else %}—{% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <div class="p-3 text-muted">No log entries yet.</div>
+      {% endif %}
+    </div>
+  </div>
+  
   <!-- Property Info (H) -->
   <div class="card mb-3">
     <div class="card-header">Property Info (H)</div>
@@ -492,12 +559,48 @@
     </div>
   </div>
 
-  <!-- Comps (placeholder) -->
-  <div class="card mb-4">
-    <div class="card-header">Comps</div>
-    <div class="card-body">
-      <div class="text-muted">Comps logic will be added later.</div>
-    </div>
+{# ---------- Comps (filtered) ---------- #}
+{% set comps = comps_list or [] %}
+<div class="card mb-4">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span>Comps (≤ 6mo, ≤ 0.5mi, ±15% sqft, ±5yr{% if comps and comps[0].subdivision %}, same subdivision{% endif %})</span>
+    <span class="badge bg-light text-muted">{{ comps|length }} matches</span>
+  </div>
+  <div class="card-body p-0">
+    {% if comps %}
+      <table class="table table-sm mb-0 align-middle">
+        <thead>
+          <tr>
+            <th style="width:38%;">Address</th>
+            <th style="width:14%;">Sale Date</th>
+            <th style="width:14%;">Price</th>
+            <th style="width:8%;">Beds</th>
+            <th style="width:8%;">Baths</th>
+            <th style="width:10%;">Sqft</th>
+            <th style="width:8%;">Yr</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for c in comps[:10] %}
+            <tr>
+              <td class="small">{{ c.address }}</td>
+              <td class="small">{{ c.saleDate or '—' }}</td>
+              <td class="small">{% if c.price is number %}{{ c.price|currency }}{% else %}—{% endif %}</td>
+              <td class="small">{{ c.beds if c.beds is not none else '—' }}</td>
+              <td class="small">{{ c.baths if c.baths is not none else '—' }}</td>
+              <td class="small">{{ c.sqft if c.sqft is not none else '—' }}</td>
+              <td class="small">{{ c.yearBuilt if c.yearBuilt is not none else '—' }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <div class="p-2 text-muted small">Showing up to 10 best comps.</div>
+    {% else %}
+      <div class="p-3 text-muted">No comps matched the rules. Try widening tolerance or refresh ATTOM.</div>
+    {% endif %}
   </div>
 </div>
+
+
+
 {% endblock %}

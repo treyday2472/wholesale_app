@@ -2,8 +2,9 @@
 from flask import jsonify, request, current_app
 from . import api
 from .auth import require_token
-from ..app import db
-from ..app.models import Lead, Property, LeadEvent
+
+from .. import db
+from ..models import Lead, Property, LeadEvent
 from datetime import datetime
 
 

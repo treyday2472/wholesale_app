@@ -3,7 +3,7 @@ import os
 import json
 from flask import (
     Blueprint, render_template, redirect, url_for,
-    request, flash, current_app, session
+    request, flash, current_app, session, jsonify
 )
 
 from .services import attom as attom_svc
@@ -40,6 +40,16 @@ from .services.melissa_client import (
 # (optional) Salesforce export
 from .services.salesforce import upsert_lead, SalesforceAuthError, SalesforceApiError
 from .services.investor_snapshot import build_snapshot_for_property
+
+def _log(raw: dict, *, source: str, event: str, status, note: str = None, meta: dict = None):
+    raw.setdefault("log", []).append({
+        "at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "source": source,
+        "event": event,
+        "status": status,
+        "note": note,
+        "meta": meta or {}
+    })
 
 main = Blueprint('main', __name__)
 
@@ -457,18 +467,21 @@ def property_detail(property_id: int):
     if lead_for_prop:
         intake = lead_for_prop.intake
         if isinstance(intake, str):
-            try: inatke = json.loads(intake)
+            try: intake = json.loads(intake)
             except Exception: intake = {}
         if isinstance(intake, dict):
-            est_repairs = intake.get("repairs_costs")
+            est_repairs = intake.get("repairs_cost_est")
 
-    
+    # pull filtered comps saved by enrich_attom
+    attx = (raw.get("attom_extract") or {})
+    comps_list = attx.get("comps") or []    
 
     return render_template(
         'property_detail.html',
         prop=prop,
         snapshot=snapshot,
         est_repairs=est_repairs,
+        comps_list=comps_list,
 
         raw=raw,  # <-- important: give the template access to the raw payloads
         GOOGLE_MAPS_API_KEY=current_app.config.get('GOOGLE_MAPS_API_KEY', '')
@@ -686,6 +699,64 @@ def learn_seller_financing():
 def lead_form_alias():
     return redirect(url_for('main.lead_new_step1'))
 
+@main.route("/comps", methods=["GET"])
+def api_comps():
+    a1    = request.values.get("address1") or request.values.get("address")
+    city  = request.values.get("city")
+    state = request.values.get("state")
+    postal= request.values.get("postalcode") or request.values.get("zip")
+    lat   = request.values.get("latitude")
+    lon   = request.values.get("longitude")
+
+    def _to_float(v):
+        try: return float(v)
+        except (TypeError, ValueError): return None
+
+    # tighter defaults for comps
+    try:
+        radius = float(request.values.get("radius", 0.5) or 0.5)
+    except (TypeError, ValueError):
+        radius = 0.5
+
+    lat_f, lon_f = _to_float(lat), _to_float(lon)
+
+    try:
+        if lat_f is not None and lon_f is not None:
+            payload = attom_svc.sale_comps(
+                lat=lat_f, lon=lon_f, radius_miles=radius,
+                page_size=50, last_n_months=6
+            )
+        else:
+            payload = attom_svc.sale_comps(
+                address1=a1, city=city, state=state, postalcode=postal,
+                radius_miles=radius, page_size=50, last_n_months=6
+            )
+
+        comps = attom_svc.extract_comps(payload, max_items=50)
+
+        # Optional subject constraints from query
+        subj_sqft = _to_float(request.values.get("subject_sqft"))
+        try:
+            subj_year = int(request.values.get("subject_year")) if request.values.get("subject_year") else None
+        except Exception:
+            subj_year = None
+        subj_sub  = request.values.get("subject_subdivision") or None
+
+        good = attom_svc.filter_comps_rules(
+            comps,
+            subject_sqft=subj_sqft,
+            subject_year=subj_year,
+            subject_subdivision=subj_sub,
+            max_months=6,
+            max_radius_miles=0.5,
+            sqft_tolerance=0.15,
+            year_tolerance=5,
+            require_subdivision=bool(subj_sub)  # require if provided
+        )
+
+        return jsonify({"status": "ok", "comps": good})
+    except Exception as e:
+        return jsonify({"status": "error", "error": str(e)}), 400
 
 
 @main.route("/properties/<int:property_id>/enrich_attom", methods=["POST"])
@@ -718,7 +789,26 @@ def enrich_attom(property_id):
 
     # Try to harvest coords & basics from detail
     lat, lon = attom_svc.extract_detail_coords(detail_payload)
-    basics   = attom_svc.extract_detail_basics(detail_payload)
+    basics   = attom_svc.extract_detail_basics(detail_payload) if isinstance(detail_payload, dict) else {}
+
+    # Subject info for rules
+    def _to_float(v):
+        try: return float(v)
+        except Exception: return None
+    def _to_int(v):
+        try: return int(v)
+        except Exception: return None
+
+    subject_sqft = _to_float(basics.get("sqft")) or _to_float(prop.sqft)
+    subject_year = _to_int(basics.get("yearBuilt")) or _to_int(prop.year_built)
+
+    subject_sub = None
+    try:
+        # Melissa: LookupProperty → Records[0].Legal.Subdivision
+        subject_sub = (((raw.get("melissa") or {}).get("LookupProperty") or {})
+                        .get("Records") or [])[0].get("Legal", {}).get("Subdivision")
+    except Exception:
+        subject_sub = None
 
     # 2) AVM + Rental AVM (ADDRESS ONLY)
     try:
@@ -731,20 +821,75 @@ def enrich_attom(property_id):
     except Exception as e:
         rent_payload = {"_error": str(e)}
 
-    # 3) Comps — use lat/lon if both present; else address fallback
+    # 3) Comps — prefer coordinates; fallback to address (tight defaults)
     try:
-        if lat is not None and lon is not None:
-            comps_payload = attom_svc.sale_comps(lat=lat, lon=lon, radius_miles=1.0, last_n_months=12)
+        # allow override via form, else use 0.5 mi
+        try:
+            radius = float(request.values.get("radius", 0.5) or 0.5)
+        except Exception:
+            radius = 0.5
+
+        if lat not in (None, "", "null") and lon not in (None, "", "null"):
+            comps_payload = attom_svc.sale_comps(
+                lat=float(lat), lon=float(lon),
+                radius_miles=radius, page_size=50, last_n_months=6
+            )
         else:
-            comps_payload = attom_svc.sale_comps(address1=a1, city=city, state=state, postalcode=postal, radius_miles=1.0)
+            comps_payload = attom_svc.sale_comps(
+                address1=a1, city=city, state=state, postalcode=postal,
+                radius_miles=radius, page_size=50, last_n_months=6
+            )
     except Exception as e:
         comps_payload = {"_error": str(e)}
+
+    # Normalize comps, then apply rules
+    comps = attom_svc.extract_comps(comps_payload, max_items=50)
+    good_comps = attom_svc.filter_comps_rules(
+        comps,
+        subject_sqft=subject_sqft,
+        subject_year=subject_year,
+        subject_subdivision=subject_sub,
+        max_months=6,
+        max_radius_miles=0.5,
+        sqft_tolerance=0.15,
+        year_tolerance=5,
+        require_subdivision=bool(subject_sub),  # require match if we know the subdivision
+    )
 
     # 4) Schools (address-only)
     try:
         schools_payload = attom_svc.detail_with_schools(address1=a1, city=city, state=state, postalcode=postal)
     except Exception as e:
         schools_payload = {"_error": str(e)}
+
+    # ----- Activity log entries (ATTOM) -----
+    if isinstance(detail_payload, dict):
+        _log(
+            raw, source="ATTOM", event="property_detail",
+            status=(detail_payload.get("status", {}) or {}).get("code", "ok"),
+            note="property/detail", meta={"has_property": bool((detail_payload or {}).get("property"))},
+        )
+    if isinstance(avm_payload, dict):
+        status_code = (avm_payload.get("status") or {}).get("code", "ok")
+        try:
+            avm_val = (((avm_payload.get("property") or [])[0].get("avm") or {}).get("amount") or {}).get("value")
+        except Exception:
+            avm_val = None
+        _log(raw, source="ATTOM", event="avm", status=status_code,
+             note=(f"avm value={avm_val}" if avm_val is not None else "avm"))
+    if isinstance(rent_payload, dict):
+        _log(raw, source="ATTOM", event="rental_avm",
+             status=(rent_payload.get("status") or {}).get("code", "ok"),
+             note="valuation/rentalavm")
+    if isinstance(comps_payload, dict):
+        code = (comps_payload.get("status") or {}).get("code", "ok")
+        n    = len(comps_payload.get("property", []))
+        _log(raw, source="ATTOM", event="sale_snapshot", status=code,
+             note=f"{n} raw comps", meta={"radius": radius})
+    if isinstance(schools_payload, dict):
+        _log(raw, source="ATTOM", event="detail_with_schools",
+             status=(schools_payload.get("status") or {}).get("code", "ok"),
+             note="property/detailwithschools")
 
     # Save raw
     raw.setdefault("attom", {})
@@ -757,22 +902,22 @@ def enrich_attom(property_id):
         "as_of": datetime.utcnow().strftime("%Y-%m-%d"),
     }
 
-    # Light extracts for UI
+    # Light extracts for UI (store FILTERED comps)
     v, lo, hi, avm_asof, conf = attom_svc.extract_avm_numbers(avm_payload)
     rv, rlo, rhi, r_asof = attom_svc.extract_rental_avm_numbers(rent_payload)
     raw["attom_extract"] = {
         "avm": {"value": v, "low": lo, "high": hi, "as_of": avm_asof, "confidence": conf},
         "rental_avm": {"value": rv, "low": rlo, "high": rhi, "as_of": r_asof},
-        "comps": attom_svc.extract_comps(comps_payload, max_items=10),
+        "comps": good_comps,  # << filtered comps shown in UI
         "schools": attom_svc.extract_schools(schools_payload, max_items=5),
     }
 
     # Promote basics into Property if blank
     if basics:
         prop.full_address = basics.get("fullAddress") or prop.full_address
-        if not prop.beds and basics.get("beds"): prop.beds = basics["beds"]
-        if not prop.baths and basics.get("baths"): prop.baths = basics["baths"]
-        if not prop.sqft and basics.get("sqft"): prop.sqft = basics["sqft"]
+        if not prop.beds and basics.get("beds"):            prop.beds = basics["beds"]
+        if not prop.baths and basics.get("baths"):          prop.baths = basics["baths"]
+        if not prop.sqft and basics.get("sqft"):            prop.sqft = basics["sqft"]
         if not prop.year_built and basics.get("yearBuilt"): prop.year_built = basics["yearBuilt"]
         if not prop.lat and basics.get("lat"):
             try: prop.lat = float(basics["lat"])

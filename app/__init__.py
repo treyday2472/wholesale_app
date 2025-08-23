@@ -46,7 +46,6 @@ def create_app():
     app.config.from_object("config.Config")
 
     # Overlay selected environment variables into app.config
-    # (ATTOM key is the important one here)
     overlays = {
         "API_KEY": os.getenv("API_KEY", app.config.get("API_KEY", "")),
         "ATTOM_API_KEY": os.getenv("ATTOM_API_KEY", app.config.get("ATTOM_API_KEY", "")),
@@ -60,12 +59,16 @@ def create_app():
         "SF_INSTANCE_URL": os.getenv("SF_INSTANCE_URL", app.config.get("SF_INSTANCE_URL", "")),
     }
     app.config.update(overlays)
-    # Booleans (parse explicitly)
-    app.config["SF_ENABLED"] = _as_bool(os.getenv("SF_ENABLED", app.config.get("SF_ENABLED", False)))
+    app.config["SF_ENABLED"] = _as_bool(
+        os.getenv("SF_ENABLED", app.config.get("SF_ENABLED", False))
+    )
 
     # Quick visibility in logs (won’t print sensitive values)
     app.logger.info("Config loaded. ATTOM key present? %s", bool(app.config.get("ATTOM_API_KEY")))
-    app.logger.info("Melissa key present? %s", bool(app.config.get("MELISSA_API_KEY") or app.config.get("MELISSA_KEY")))
+    app.logger.info(
+        "Melissa key present? %s",
+        bool(app.config.get("MELISSA_API_KEY") or app.config.get("MELISSA_KEY")),
+    )
 
     # Init extensions
     db.init_app(app)
@@ -87,7 +90,7 @@ def create_app():
 
     # Optional: register custom filters (if present)
     try:
-        from .filters import register_filters
+        from .filters import register_filters  # noqa: WPS433
         register_filters(app)
     except Exception:
         pass
@@ -96,18 +99,32 @@ def create_app():
     from .routes import main as main_bp
     app.register_blueprint(main_bp)
 
+    # Voice (optional)
     try:
-        from .voicebot import voice as voice_bp
+        from .voicebot import voice as voice_bp  # noqa: WPS433
         app.register_blueprint(voice_bp)
     except Exception:
         pass
 
-    # Optional API blueprint
+    # API blueprint (optional) — support either app/api/... or project-level api/...
+    api_bp = None
     try:
-        from api.routes import api as api_blueprint
-        app.register_blueprint(api_blueprint, url_prefix="/api")
+        from .api.routes import api as _api_bp  # app/api/routes.py
+        api_bp = _api_bp
     except Exception:
-        pass
+        try:
+            from api.routes import api as _api_bp  # api/routes.py at project root
+            api_bp = _api_bp
+        except Exception:
+            api_bp = None
+
+    if api_bp:
+        app.register_blueprint(api_bp, url_prefix="/api")
+        # JSON endpoints typically don't use CSRF tokens
+        try:
+            csrf.exempt(api_bp)
+        except Exception:
+            pass
 
     # Dev convenience: ensure tables exist
     with app.app_context():
