@@ -41,6 +41,8 @@ from .services.melissa_client import (
 from .services.salesforce import upsert_lead, SalesforceAuthError, SalesforceApiError
 from .services.investor_snapshot import build_snapshot_for_property
 
+
+
 def _log(raw: dict, *, source: str, event: str, status, note: str = None, meta: dict = None):
     raw.setdefault("log", []).append({
         "at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
@@ -52,6 +54,8 @@ def _log(raw: dict, *, source: str, event: str, status, note: str = None, meta: 
     })
 
 main = Blueprint('main', __name__)
+
+
 
 def _split_us_address(addr: str):
     """Return (a1, city, state, postal) or (addr, '', '', '') if we can't parse."""
@@ -758,6 +762,84 @@ def api_comps():
     except Exception as e:
         return jsonify({"status": "error", "error": str(e)}), 400
 
+@main.route("/properties/<int:property_id>/comps_rules", methods=["POST"], endpoint="save_comp_rules")
+def save_comp_rules(property_id: int):
+    """Persist comp-rule settings posted from the UI, then refresh comps."""
+    prop = Property.query.get_or_404(property_id)
+
+    def _to_float(v):
+        try:
+            return float(v) if v not in (None, "") else None
+        except Exception:
+            return None
+
+    def _to_int(v):
+        try:
+            return int(float(v)) if v not in (None, "") else None
+        except Exception:
+            return None
+
+    def _to_bool(v):
+        if v is None:
+            return False
+        s = str(v).strip().lower()
+        return s not in ("", "0", "false", "no", "off", "none")
+
+    # Read form values (names should match your template inputs)
+    radius             = _to_float(request.form.get("radius" or request.form.get("max_radius_miles")))             # miles
+    
+    max_months         = _to_int(request.form.get("max_months"))           # e.g. 60 for 5 years
+    sqft_tol_pct = _to_float(request.form.get("sqft_tolerance_pct"))
+    sqft_tolerance = (
+        sqft_tol_pct / 100.0
+        if sqft_tol_pct is not None
+        else _to_float(request.form.get("sqft_tolerance")))
+
+    year_tolerance     = _to_int(request.form.get("year_tolerance"))       # e.g. 5 or 10
+    require_subdivision= _to_bool(request.form.get("require_subdivision"))
+
+    # Optional subject overrides
+    subject_sqft       = _to_int(request.form.get("subject_sqft"))
+    subject_year       = _to_int(request.form.get("subject_year"))
+    subject_sub        = (request.form.get("subject_subdivision") or "").strip() or None
+
+    # Safe-load raw json
+    try:
+        raw = json.loads(prop.raw_json) if prop.raw_json else {}
+    except Exception:
+        raw = {}
+
+    # Persist rules where the template can also read them back
+    rules = {
+        "radius": radius,
+        "max_months": max_months,
+        "sqft_tolerance": sqft_tolerance,
+        "year_tolerance": year_tolerance,
+        "require_subdivision": require_subdivision,
+        "subject_sqft": subject_sqft,
+        "subject_year": subject_year,
+        "subject_subdivision": subject_sub,
+        "updated_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+    }
+    raw["comp_rules"] = rules
+    prop.raw_json = json.dumps(raw)
+    db.session.add(prop)
+    db.session.commit()
+
+    # Redirect to ATTOM refresh using GET so the rules apply immediately
+    q = {}
+    if radius is not None:             q["radius"] = radius
+    if max_months is not None:         q["max_months"] = max_months
+    if sqft_tolerance is not None:     q["sqft_tolerance"] = sqft_tolerance
+    if year_tolerance is not None:     q["year_tolerance"] = year_tolerance
+    if require_subdivision:            q["require_subdivision"] = "1"
+    if subject_sqft is not None:       q["subject_sqft"] = subject_sqft
+    if subject_year is not None:       q["subject_year"] = subject_year
+    if subject_sub:                    q["subject_subdivision"] = subject_sub
+
+    flash("Comp rules saved.", "success")
+    return redirect(url_for("main.enrich_attom", property_id=prop.id, **q))
+
 
 @main.route("/properties/<int:property_id>/enrich_attom", methods=["POST"])
 def enrich_attom(property_id):
@@ -931,3 +1013,165 @@ def enrich_attom(property_id):
     db.session.commit()
     flash("ATTOM data refreshed.", "success")
     return redirect(url_for("main.property_detail", property_id=property_id))
+
+# --- AI/Heuristic comps selection ---
+@main.route("/properties/<int:property_id>/comps_ai_select", methods=["POST"])
+def comps_ai_select(property_id):
+    # Prefer AI helper if available; otherwise use a built-in heuristic
+    try:
+        from .services.ai import choose_best_comps_with_ai, score_comps_heuristic
+        have_ai = True
+    except Exception:
+        have_ai = False
+        choose_best_comps_with_ai = None
+
+        # lightweight heuristic fallback (distance, recency, sqft similarity)
+        from datetime import datetime
+        def _to_float(x):
+            try: return float(x)
+            except Exception: return None
+        def _days_ago(dstr):
+            try:
+                d = datetime.fromisoformat(str(dstr)[:10]).date()
+                return (datetime.utcnow().date() - d).days
+            except Exception:
+                return None
+        def score_comps_heuristic(subject, comps):
+            s_sqft = _to_float(subject.get("sqft"))
+            out = []
+            for c in comps:
+                dist = _to_float(c.get("distance")) or 9.9
+                days = _days_ago(c.get("saleDate")) or 9999
+                c_sqft = _to_float(c.get("sqft"))
+                sqft_pen = abs((c_sqft - s_sqft)/s_sqft) if (s_sqft and c_sqft) else 0.5
+                # smaller is better: combine with weights
+                s = (dist*2.0) + (days/90.0) + (sqft_pen*3.0)
+                out.append((s, c))
+            out.sort(key=lambda x: x[0])
+            return [c for _, c in out]
+
+    prop = Property.query.get_or_404(property_id)
+
+    # Load raw
+    try:
+        raw = json.loads(prop.raw_json) if prop.raw_json else {}
+    except Exception:
+        raw = {}
+
+    attx = (raw.get("attom_extract") or {})
+    candidates = attx.get("comps") or []
+    if not candidates:
+        snap = (raw.get("attom") or {}).get("sale_snapshot") or {}
+        candidates = attom_svc.extract_comps(snap, max_items=100)
+
+    subj = {
+        "address": prop.full_address or prop.address,
+        "beds": prop.beds,
+        "baths": prop.baths,
+        "sqft": prop.sqft,
+        "yearBuilt": prop.year_built,
+        "lat": prop.lat, "lng": prop.lng,
+    }
+
+    try:
+        top_k = int(request.form.get("k") or 6)
+    except Exception:
+        top_k = 6
+
+    picked, notes = [], ""
+    if have_ai and choose_best_comps_with_ai:
+        try:
+            picked, notes = choose_best_comps_with_ai(subj, candidates, k=top_k)
+        except Exception as e:
+            current_app.logger.exception("AI comps selection failed")
+            notes = f"AI selection failed: {e}. Falling back to heuristic."
+
+    if not picked:
+        picked = score_comps_heuristic(subj, candidates)[:top_k]
+        if not notes:
+            notes = "Heuristic selection."
+
+    attx["comps_selected"] = picked
+    attx["comps_selected_notes"] = notes
+    raw["attom_extract"] = attx
+
+    prop.raw_json = json.dumps(raw)
+    db.session.add(prop)
+    db.session.commit()
+
+    flash(f"Selected {len(picked)} comps.", "success")
+    current_app.logger.info("comps_ai_select: relative-imports OK")
+    return redirect(url_for("main.property_detail", property_id=property_id))
+
+# --- Save manual edits (and locks) ---
+@main.route("/properties/<int:property_id>/update", methods=["POST"], endpoint="property_update")
+def property_update(property_id):
+    from flask import request, redirect, url_for, flash
+    import json
+
+    prop = Property.query.get_or_404(property_id)
+
+    # load raw json safely
+    try:
+        raw = json.loads(prop.raw_json) if prop.raw_json else {}
+    except Exception:
+        raw = {}
+
+    locks = raw.get("locks") or {}
+    if not isinstance(locks, dict):
+        locks = {}
+    ux = raw.get("user_overrides") or {}
+
+    def _to_int(v):
+        try:
+            return int(v) if v not in (None, "") else None
+        except Exception:
+            return None
+
+    def _to_float(v):
+        try:
+            return float(v) if v not in (None, "") else None
+        except Exception:
+            return None
+
+    # Editable core columns from the form
+    full_address    = request.form.get("full_address")
+    beds            = request.form.get("beds")
+    baths           = request.form.get("baths")
+    sqft            = request.form.get("sqft")
+    lot_size        = request.form.get("lot_size")
+    year_built      = request.form.get("year_built")
+    lat             = request.form.get("lat")
+    lng             = request.form.get("lng")
+    school_district = request.form.get("school_district")
+
+    if full_address is not None:     prop.full_address    = full_address or prop.full_address
+    if beds is not None:             prop.beds            = _to_int(beds)
+    if baths is not None:            prop.baths           = _to_float(baths)
+    if sqft is not None:             prop.sqft            = _to_int(sqft)
+    if lot_size is not None:         prop.lot_size        = _to_int(lot_size)
+    if year_built is not None:       prop.year_built      = _to_int(year_built)
+    if lat is not None:              prop.lat             = _to_float(lat)
+    if lng is not None:              prop.lng             = _to_float(lng)
+    if school_district is not None:  prop.school_district = (school_district or None)
+
+    # Extra overrides not in the model but stored in raw
+    for k in ("hoa", "subdivision", "notes"):
+        if k in request.form:
+            ux[k] = request.form.get(k) or None
+    raw["user_overrides"] = ux
+
+    # Locks: look for checkboxes named lock_<field>
+    for f in ("full_address","beds","baths","sqft","lot_size","year_built","lat","lng","school_district","hoa","subdivision"):
+        locks[f] = bool(request.form.get(f"lock_{f}"))
+    raw["locks"] = locks
+
+    # persist
+    prop.raw_json = json.dumps(raw)
+    db.session.add(prop)
+    db.session.commit()
+
+    flash("Saved changes and locks.", "success")
+    return redirect(url_for("main.property_detail", property_id=prop.id))
+
+

@@ -6,6 +6,7 @@ from .auth import require_token
 from .. import db
 from ..models import Lead, Property, LeadEvent
 from datetime import datetime
+from ..services import attom as attom_svc
 
 
 @api.route('/health', methods=['GET'])

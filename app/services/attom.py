@@ -8,6 +8,45 @@ ATTOM_BASE = "https://api.gateway.attomdata.com"
 class AttomError(Exception):
     pass
 
+def _to_float(x):
+    """Safe float parse that tolerates None, '', and '1,234'."""
+    try:
+        if x is None:
+            return None
+        if isinstance(x, (int, float)):
+            return float(x)
+        s = str(x).strip()
+        if not s:
+            return None
+        return float(s.replace(",", ""))
+    except Exception:
+        return None
+
+def _parse_date_any(s):
+    """
+    Parse a bunch of common ATTOM date shapes and return a datetime.date or None.
+    Handles: 'YYYY-MM-DD', 'YYYY/MM/DD', 'MM/DD/YYYY', 'YYYY-MM',
+             and the ISO-ish forms with time suffix.
+    """
+    if not s:
+        return None
+    s = str(s).strip()
+    fmts = (
+        "%Y-%m-%d",
+        "%Y/%m/%d",
+        "%m/%d/%Y",
+        "%Y-%m",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%dT%H:%M:%S.%fZ",
+    )
+    for fmt in fmts:
+        try:
+            dt = datetime.strptime(s[:len(fmt)], fmt)
+            return dt.date()
+        except Exception:
+            continue
+    return None
+
 def _key():
     k = os.getenv("ATTOM_API_KEY")
     if not k:
@@ -91,7 +130,7 @@ def rental_avm(address1=None, city=None, state=None, postalcode=None, lat=None, 
 def sale_comps(address1=None, city=None, state=None, postalcode=None,
                radius_miles=1.0, min_beds=None, max_beds=None,
                min_baths=None, max_baths=None, page_size=25,
-               lat=None, lon=None, last_n_months=None, order_by="saleAmt desc"):
+               lat=None, lon=None, last_n_months=None, order_by="saleSearchDate desc"):
     """
     Get comparable sales snapshot.
     Preferred: pass latitude & longitude. Fallback: address1 + address2 or postalcode.
@@ -228,84 +267,176 @@ def _parse_date(s):
 def extract_comps(snapshot: dict, max_items=50, include_nulls=False):
     out = []
     props = (snapshot or {}).get("property", []) or []
-    for row in props:
+    for row in props[:max_items]:
         a = row.get("address", {}) or {}
         b = row.get("building", {}) or {}
         rooms = b.get("rooms") or {}
         size  = b.get("size") or {}
-        summ  = b.get("summary") or {}
+        # IMPORTANT: summary lives at the ROW level on this endpoint
+        summ  = row.get("summary") or b.get("summary") or {}
         loc   = row.get("location", {}) or {}
         sale  = row.get("sale", {}) or row.get("saleSearch", {}) or {}
 
-        one_line = a.get("oneLine") or ", ".join([a.get("line1",""), a.get("locality",""), a.get("countrySubd",""), a.get("postal1","")]).strip(", ")
+        one_line = (
+            a.get("oneLine")
+            or ", ".join([a.get("line1",""), a.get("locality",""), a.get("countrySubd",""), a.get("postal1","")]).strip(", ")
+            or None
+        )
 
         amount = sale.get("amount") or {}
-        doc    = amount.get("saledoctype") or sale.get("saledoctype")
-        tran   = sale.get("saletranstype")
+        doc    = (
+            amount.get("saledoctype")
+            or sale.get("saledoctype")
+            or sale.get("saleDocType")
+        )
 
-        price  = _first(amount.get("saleamt"), sale.get("saleamt"), sale.get("saleAmt"))
-        if not _is_deed_doc(doc):
-            price = None  # ignore mortgage/assignment/etc.
+        # price only trusted for deed-like docs; keep row anyway if not deed
+        price_raw = _first(amount.get("saleamt"), sale.get("saleamt"), sale.get("saleAmt"))
+        price     = _to_float(price_raw) if _is_deed_doc(doc) else None
 
-        sale_date = _first(sale.get("saleTransDate"), sale.get("saleDate"), sale.get("salerecdate"))
+        # capture many variants of the date key (ATTOM isn’t fully consistent)
+        sale_date = _first(
+            sale.get("saleTransDate"),
+            sale.get("saleDate"),
+            sale.get("salerecdate"),
+            sale.get("saleSearchDate"),
+            sale.get("salesearchdate"),
+        )
 
         out.append({
-            "address": one_line or None,
-            "saleDate": sale_date,
+            "address": one_line,
+            "saleDate": sale_date,  # may be None; we won't drop solely for that
             "price": price,
             "beds": _first(rooms.get("beds"), b.get("bedrooms")),
-            "baths": _first(rooms.get("bathsFull"), rooms.get("baths"), b.get("bathrooms")),
+            # INCLUDE bathstotal so you see baths in Aventura results
+            "baths": _first(rooms.get("bathstotal"), rooms.get("bathsFull"), rooms.get("baths"), b.get("bathrooms")),
             "sqft": _first(size.get("livingsize"), size.get("bldgsize"), size.get("universalsize"), size.get("grossSize")),
             "distance": loc.get("distance"),
             "docType": doc,
-            "transType": tran,
+            "transType": sale.get("saletranstype"),
             "yearBuilt": _first(summ.get("yearbuilt"), b.get("yearbuilt"), b.get("yearBuilt")),
-            "subdivision": _first(summ.get("subdivision"),
-                                  row.get("lot", {}) and row.get("lot", {}).get("subdivision"),
-                                  loc.get("neighborhoodName"),
-                                  a.get("neighborhoodName")),
+            "subdivision": _first(
+                loc.get("subdname"),
+                summ.get("subdivision"),
+                summ.get("Subdivision"),
+                (row.get("lot") or {}).get("subdivision"),
+                a.get("neighborhoodName"),
+            ),
         })
-        if len(out) >= max_items:
-            break
     return out
 
-def filter_comps_rules(comps, *, subject_sqft, subject_year, subject_subdivision=None,
-                       max_months=6, max_radius_miles=0.5, sqft_tolerance=0.15, year_tolerance=5,
-                       require_subdivision=False):
-    cutoff = datetime.utcnow().date() - timedelta(days=int(max_months*30.5))
-    lo_sqft = subject_sqft*(1-sqft_tolerance) if subject_sqft else None
-    hi_sqft = subject_sqft*(1+sqft_tolerance) if subject_sqft else None
-    norm = lambda s: (s or "").strip().lower()
-    subj_sub = norm(subject_subdivision)
+def filter_comps_rules(
+    comps,
+    *,
+    subject_sqft=None,
+    subject_year=None,
+    subject_subdivision=None,
+    max_months=6,
+    max_radius_miles=0.5,
+    sqft_tolerance=0.15,
+    year_tolerance=5,
+    require_subdivision=False,
+    min_price=0,
+    max_price=None,
+    collect_debug=False,
+    drop_if_missing_date=False,  # <-- new toggle; default keep rows with no date
+):
+    # cutoff as datetime (not date) so we can compare safely
+    from datetime import datetime, timedelta
+    cutoff = None
+    if max_months:
+        try:
+            from dateutil.relativedelta import relativedelta
+            cutoff = datetime.utcnow() - relativedelta(months=int(max_months))
+        except Exception:
+            cutoff = datetime.utcnow() - timedelta(days=int(max_months * 30.5))
+
+    def _norm(s): return (s or "").strip().lower()
+    subj_sub = _norm(subject_subdivision)
 
     kept = []
+    why = {"date": 0, "date_missing": 0, "radius": 0, "sqft": 0, "year": 0, "subd": 0, "price": 0}
+
+    # precompute sqft band
+    lo_sqft = subject_sqft * (1 - float(sqft_tolerance)) if subject_sqft else None
+    hi_sqft = subject_sqft * (1 + float(sqft_tolerance)) if subject_sqft else None
+
     for c in comps:
-        d = _parse_date(c.get("saleDate"))
-        if not d or d < cutoff:           continue
+        # DATE: only drop if a date exists and is older than cutoff
+        d = _parse_date_any(c.get("saleDate"))
+        if cutoff:
+            if d is None:
+                if collect_debug: why["date_missing"] += 1
+                if drop_if_missing_date:
+                    # strictly enforce date presence if caller requests it
+                    continue
+            else:
+                # keep if recent; drop if older
+                if d < cutoff.date():
+                    if collect_debug: why["date"] += 1
+                    continue
+
+        # RADIUS
         try:
-            dist = float(c.get("distance")) if c.get("distance") is not None else None
+            dist = float(c["distance"]) if c.get("distance") not in (None, "", "null") else None
         except Exception:
             dist = None
-        if dist is None or dist > max_radius_miles:   continue
+        if dist is not None and max_radius_miles is not None and dist > float(max_radius_miles):
+            if collect_debug: why["radius"] += 1
+            continue
+
+        # SQFT
         if subject_sqft and c.get("sqft"):
             try:
                 sq = float(c["sqft"])
+                if (lo_sqft and sq < lo_sqft) or (hi_sqft and sq > hi_sqft):
+                    if collect_debug: why["sqft"] += 1
+                    continue
             except Exception:
-                sq = None
-            if not sq or (lo_sqft and sq < lo_sqft) or (hi_sqft and sq > hi_sqft):  continue
+                # if sqft can't be parsed, don't auto-drop
+                pass
+
+        # YEAR
         if subject_year and c.get("yearBuilt"):
             try:
                 cy = int(c["yearBuilt"])
+                if abs(cy - int(subject_year)) > int(year_tolerance):
+                    if collect_debug: why["year"] += 1
+                    continue
             except Exception:
-                cy = None
-            if cy is None or abs(cy - int(subject_year)) > year_tolerance:          continue
+                pass
+
+        # SUBDIVISION
         if require_subdivision and subj_sub:
-            if norm(c.get("subdivision")) != subj_sub:                               continue
+            if _norm(c.get("subdivision")) != subj_sub:
+                if collect_debug: why["subd"] += 1
+                continue
+
+        # PRICE sanity (optional)
+        price = _to_float(c.get("price"))
+        if price is not None:
+            if price < float(min_price):
+                if collect_debug: why["price"] += 1
+                continue
+            if max_price is not None and price > float(max_price):
+                if collect_debug: why["price"] += 1
+                continue
+
         kept.append(c)
 
-    kept.sort(key=lambda x: (_parse_date(x.get("saleDate")) or datetime.min.date(),
-                             -(float(x.get("distance") or 9e9))), reverse=True)
-    return kept
+    # newest (if any date) first, then nearest
+    def _sort_key(x):
+        d = _parse_date_any(x.get("saleDate"))
+        ds = d.toordinal() if d else -1  # undated at bottom
+        try:
+            dist = float(x.get("distance")) if x.get("distance") not in (None, "", "null") else 9e9
+        except Exception:
+            dist = 9e9
+        return (ds, -dist)
+
+    kept.sort(key=_sort_key, reverse=True)
+    return (kept, why) if collect_debug else kept
+
 
 
 def extract_schools(detail_with_schools_payload: dict, max_items=5):
