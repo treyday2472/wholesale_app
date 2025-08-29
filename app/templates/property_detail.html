@@ -680,6 +680,7 @@
   </div>
 
 
+
   {% set cdbg = (raw_all.get('attom_extract') or {}).get('comps_debug') %}
   {% if cdbg %}
     <div class="alert alert-secondary small mb-2">
@@ -699,12 +700,16 @@
   {% set r_sqft   = (saved_rules.get('sqft_tolerance', 0.15) * 100) %}
   {% set r_years  = saved_rules.get('year_tolerance', 5) %}
   {% set r_subd   = saved_rules.get('require_subdivision', False) %}
+
   <div class="card mb-4">
     <div class="card-header d-flex justify-content-between align-items-center">
       <span>Comps (≤ {{ r_months }}mo, ≤ {{ r_radius }}mi, ± {{ r_sqft|round(0) }}% sqft, ± {{ r_years }}yr{% if r_subd %}, same subdivision{% endif %})</span>
       <span class="badge bg-light text-muted">{{ comps|length }} matches</span>
     </div>
     <div class="card-body p-0">
+
+
+
       {% if comps %}
         <table class="table table-sm mb-0 align-middle">
           <thead>
@@ -720,8 +725,18 @@
           </thead>
           <tbody>
             {% for c in comps[:10] %}
+              {# robust label for address #}
+              {% set label = c.address
+                            or c._addr_line
+                            or ((c.address1 ~ ', ' ~ (c.city or '') ~ ', ' ~ (c.state or '') ~ ' ' ~ (c.postalcode or c.postalCode or ''))|trim(', ')) %}
               <tr>
-                <td class="small">{{ c.address }}</td>
+                <td class="small">
+                  {% if c.zillow_url %}
+                    <a href="{{ c.zillow_url }}" target="_blank" rel="noopener noreferrer">{{ label }}</a>
+                  {% else %}
+                    {{ label or '—' }}
+                  {% endif %}
+                </td>
                 <td class="small">{{ c.saleDate or '—' }}</td>
                 <td class="small">{% if c.price is number %}{{ c.price|currency }}{% else %}—{% endif %}</td>
                 <td class="small">{{ c.beds if c.beds is not none else '—' }}</td>
@@ -731,6 +746,8 @@
               </tr>
             {% endfor %}
           </tbody>
+
+
         </table>
         <div class="p-2 text-muted small">
           Rules: ≤ {{ r_months }} mo, ≤ {{ r_radius }} mi, ± {{ r_sqft|round(0) }}% sqft, ± {{ r_years }} yr{% if r_subd %}, same subdivision{% endif %}.
@@ -742,7 +759,6 @@
     </div>
   </div>
   {% set attx = (raw_all or {}).get('attom_extract') or {} %}
-  {% set ai_comps = attx.get('comps_selected') or [] %}
   {% if ai_comps %}
     <div class="card mb-4">
       <div class="card-header d-flex justify-content-between align-items-center">
@@ -770,7 +786,14 @@
             {% set sc    = c.get('score') %}
             {% set why   = c.get('ai_reason') or c.get('reason') %}
             <tr>
-              <td class="small">{{ c.get('address') }}</td>
+              <td class="small">
+                {% set label = c.get('address') or c.get('_addr_line') %}
+                {% if c.get('zillow_url') %}
+                  <a href="{{ c.get('zillow_url') }}" target="_blank" rel="noopener noreferrer">{{ label }}</a>
+                {% else %}
+                  {{ label or '—' }}
+                {% endif %}
+              </td>
               <td class="small">{{ c.get('saleDate') or '—' }}</td>
               <td class="small">{% if price is number %}{{ price|currency }}{% else %}—{% endif %}</td>
               <td class="small">{{ c.get('beds') if c.get('beds') is not none else '—' }}</td>

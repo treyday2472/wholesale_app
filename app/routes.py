@@ -40,6 +40,7 @@ from .services.melissa_client import (
 # (optional) Salesforce export
 from .services.salesforce import upsert_lead, SalesforceAuthError, SalesforceApiError
 from .services.investor_snapshot import build_snapshot_for_property
+from urllib.parse import quote
 
 
 
@@ -55,6 +56,17 @@ def _log(raw: dict, *, source: str, event: str, status, note: str = None, meta: 
 
 main = Blueprint('main', __name__)
 
+
+
+def _zillow_url_from_address(a1=None, city=None, state=None, postal=None):
+    """
+    Build a Zillow search URL for a given address.
+    """
+    parts = [p for p in [a1, city, state, postal] if p]
+    if not parts:
+        return None
+    slug = "-".join(" ".join(parts).replace(",", "").split())
+    return f"https://www.zillow.com/homes/{quote(slug)}/"
 
 
 def _split_us_address(addr: str):
@@ -456,38 +468,67 @@ def property_new():
 def property_detail(property_id: int):
     prop = Property.query.get_or_404(property_id)
 
-    # Build unified snapshot (your existing helper)
+    # Build unified snapshot (existing helper)
     snapshot = build_snapshot_for_property(prop) or {}
-    
 
-    # Parse raw_json once and pass it through as "raw"
+    # Parse raw_json
     try:
         raw = json.loads(prop.raw_json) if prop.raw_json else {}
     except Exception:
         raw = {}
 
-    lead_for_prop = (Lead.query.filter(Lead.address == prop.address).order_by(Lead.id.desc()).first())
+    # Estimated repairs (unchanged)
+    lead_for_prop = (Lead.query.filter(Lead.address == prop.address)
+                     .order_by(Lead.id.desc()).first())
     est_repairs = None
     if lead_for_prop:
         intake = lead_for_prop.intake
         if isinstance(intake, str):
-            try: intake = json.loads(intake)
-            except Exception: intake = {}
+            try:
+                intake = json.loads(intake)
+            except Exception:
+                intake = {}
         if isinstance(intake, dict):
             est_repairs = intake.get("repairs_cost_est")
 
-    # pull filtered comps saved by enrich_attom
+    # Pull filtered comps saved by enrich_attom
     attx = (raw.get("attom_extract") or {})
-    comps_list = attx.get("comps") or []    
+    comps_list = attx.get("comps") or []
+    ai_comps   = attx.get("comps_selected") or []
 
+    # helper: pull parts for a Zillow URL
+    def _addr_parts(c):
+        loc = (c.get("location") or {}).get("address", {}) if isinstance(c, dict) else {}
+        a1   = c.get("address1") or c.get("address") or loc.get("line")
+        city = c.get("city")     or loc.get("city")
+        st   = c.get("state")    or loc.get("state")
+        zipc = (c.get("postalcode") or c.get("postalCode") or loc.get("postalCode"))
+        return a1, city, st, zipc
+
+    def _addr_line(a1, city, st, zipc):
+        parts = []
+        if a1: parts.append(a1)
+        cs = ", ".join([p for p in [city, st] if p])
+        if cs: parts.append(cs)
+        s = " ".join(parts)
+        return (f"{s} {zipc}".strip() if zipc else s)
+
+    # attach link/label for BOTH lists
+    for group in (comps_list, ai_comps):
+        for c in group:
+            a1, city, st, zipc = _addr_parts(c)
+            c["_addr_line"] = _addr_line(a1, city, st, zipc)
+            c["zillow_url"] = _zillow_url_from_address(a1, city, st, zipc)
+
+    # hand everything to the template
     return render_template(
         'property_detail.html',
         prop=prop,
         snapshot=snapshot,
         est_repairs=est_repairs,
         comps_list=comps_list,
-
-        raw=raw,  # <-- important: give the template access to the raw payloads
+        ai_comps=ai_comps,  # <-- important
+        raw=raw,
         GOOGLE_MAPS_API_KEY=current_app.config.get('GOOGLE_MAPS_API_KEY', '')
     )
 
