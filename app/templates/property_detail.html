@@ -700,6 +700,7 @@
   {% set r_sqft   = (saved_rules.get('sqft_tolerance', 0.15) * 100) %}
   {% set r_years  = saved_rules.get('year_tolerance', 5) %}
   {% set r_subd   = saved_rules.get('require_subdivision', False) %}
+  
 
   <div class="card mb-4">
     <div class="card-header d-flex justify-content-between align-items-center">
@@ -731,6 +732,7 @@
               {% set label = c.address
                             or c._addr_line
                             or ((c.address1 ~ ', ' ~ (c.city or '') ~ ', ' ~ (c.state or '') ~ ' ' ~ (c.postalcode or c.postalCode or ''))|trim(', ')) %}
+              
               <tr>
                 <td class="small">
                   {% if c.zillow_url %}
@@ -739,12 +741,19 @@
                     {{ label or '—' }}
                   {% endif %}
                 </td>
+
                 <td class="small">{{ c.saleDate or '—' }}</td>
                 <td class="small">{% if c.price is number %}{{ c.price|currency }}{% else %}—{% endif %}</td>
                 <td class="small">{{ c.beds if c.beds is not none else '—' }}</td>
                 <td class="small">{{ c.baths if c.baths is not none else '—' }}</td>
                 <td class="small">{{ c.sqft if c.sqft is not none else '—' }}</td>
                 <td class="small">{{ c.yearBuilt if c.yearBuilt is not none else '—' }}</td>
+                {% set dist = c.distance if c.distance not in (none, '', 0) else c.mi %}
+                <td class="small">
+                  {% if dist not in (none, '', 0) %}
+                    {{ '%.2f'|format(dist|float) }}
+                  {% else %}—{% endif %}
+                </td>
               </tr>
             {% endfor %}
           </tbody>
@@ -777,7 +786,7 @@
               <th style="width:8%;">Beds</th>
               <th style="width:8%;">Baths</th>
               <th style="width:10%;">Sqft</th>
-              <th style="width:6%;">Mi</th>
+              <th style="width:6%;">Distance</th>
               <th style="width:8%;">Score</th>
             </tr>
           </thead>

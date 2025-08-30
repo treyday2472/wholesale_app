@@ -8,6 +8,7 @@ from flask import (
 
 from .services import attom as attom_svc
 from datetime import datetime
+from math import radians, sin, cos, asin, sqrt
 
 
 from .services.attom import AttomError
@@ -1077,6 +1078,45 @@ def enrich_attom(property_id):
             info = raw_index.get(_addr_key_for_comp(c)) or {}
             if info.get("ptype"):
                 c["propertyType"] = info["ptype"]
+
+    def _hav_miles(lat1, lon1, lat2, lon2):
+        R = 3958.7613  # earth radius (mi)
+        φ1, φ2 = radians(lat1), radians(lat2)
+        dφ = radians(lat2 - lat1)
+        dλ = radians(lon2 - lon1)
+        a = sin(dφ/2)**2 + cos(φ1) * cos(φ2) * sin(dλ/2)**2
+        return 2 * R * asin(sqrt(a))
+
+    def _clatlon(c):
+        loc = (c.get("location") or {})
+        # try several common shapes
+        latc = (c.get("lat") or c.get("latitude") or loc.get("lat") or loc.get("latitude"))
+        lonc = (c.get("lng") or c.get("lon") or c.get("longitude") or loc.get("lng") or loc.get("lon") or loc.get("longitude"))
+        try:
+            return float(latc), float(lonc)
+        except Exception:
+            return None, None
+
+    try:
+        slat = float(lat) if lat not in (None, "", "null") else None
+        slon = float(lon) if lon not in (None, "", "null") else None
+    except Exception:
+        slat = slon = None
+
+    if slat is not None and slon is not None:
+        for c in comps:  # 'comps' is the list from extract_comps(...)
+            if c.get("distance") in (None, "", 0):
+                clat, clon = _clatlon(c)
+                if clat is not None and clon is not None:
+                    c["distance"] = round(_hav_miles(slat, slon, clat, clon), 3)
+
+    # also accept 'mi' from an AI scorer as a fallback name
+    for c in comps:
+        if c.get("distance") in (None, "", 0) and c.get("mi") not in (None, "", 0):
+            try:
+                c["distance"] = float(c["mi"])
+            except Exception:
+                pass
 
     # ---- type-normalization & filter by subject kind ----
     def _canon_kind(val):
