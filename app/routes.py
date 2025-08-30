@@ -11,7 +11,7 @@ from datetime import datetime
 
 
 from .services.attom import AttomError
-import re
+import re as regex
 
 from werkzeug.utils import secure_filename
 from wtforms.validators import Optional  # relaxing validators after 3 tries
@@ -81,7 +81,7 @@ def _split_us_address(addr: str):
         r"^\s*(?P<a1>.+?)\s+(?P<city>.+?)\s+(?P<state>[A-Za-z]{2})\s+(?P<zip>\d{5}(?:-\d{4})?)\s*$",              # street city ST ZIP
     ]
     for p in patterns:
-        m = re.match(p, addr)
+        m = regex.match(p, addr)
         if m:
             return (m.group('a1'), m.group('city'), m.group('state').upper(), m.group('zip'))
     return (addr, "", "", "")
@@ -491,18 +491,17 @@ def property_detail(property_id: int):
         if isinstance(intake, dict):
             est_repairs = intake.get("repairs_cost_est")
 
-    # Pull filtered comps saved by enrich_attom
+    # comps from ATTOM extract
     attx = (raw.get("attom_extract") or {})
     comps_list = attx.get("comps") or []
     ai_comps   = attx.get("comps_selected") or []
 
-    # helper: pull parts for a Zillow URL
     def _addr_parts(c):
         loc = (c.get("location") or {}).get("address", {}) if isinstance(c, dict) else {}
         a1   = c.get("address1") or c.get("address") or loc.get("line")
         city = c.get("city")     or loc.get("city")
         st   = c.get("state")    or loc.get("state")
-        zipc = (c.get("postalcode") or c.get("postalCode") or loc.get("postalCode"))
+        zipc = c.get("postalcode") or c.get("postalCode") or loc.get("postalCode")
         return a1, city, st, zipc
 
     def _addr_line(a1, city, st, zipc):
@@ -513,24 +512,25 @@ def property_detail(property_id: int):
         s = " ".join(parts)
         return (f"{s} {zipc}".strip() if zipc else s)
 
-    # attach link/label for BOTH lists
+    # add label + Zillow URL to BOTH lists
     for group in (comps_list, ai_comps):
         for c in group:
             a1, city, st, zipc = _addr_parts(c)
             c["_addr_line"] = _addr_line(a1, city, st, zipc)
             c["zillow_url"] = _zillow_url_from_address(a1, city, st, zipc)
 
-    # hand everything to the template
+    # pass ai_comps to the template
     return render_template(
-        'property_detail.html',
+        "property_detail.html",
         prop=prop,
         snapshot=snapshot,
         est_repairs=est_repairs,
         comps_list=comps_list,
-        ai_comps=ai_comps,  # <-- important
+        ai_comps=ai_comps,               # <-- keep this
         raw=raw,
-        GOOGLE_MAPS_API_KEY=current_app.config.get('GOOGLE_MAPS_API_KEY', '')
+        GOOGLE_MAPS_API_KEY=current_app.config.get("GOOGLE_MAPS_API_KEY", "")
     )
+
 
 
 @main.route('/properties/<int:property_id>/delete', methods=['POST'])
@@ -656,7 +656,8 @@ def enrich_property_melissa(property_id):
     # 0) Build address strings
     raw_addr = (prop.full_address or prop.address or "").strip()
     # strip trailing country tokens that confuse simple parsers
-    raw_addr_clean = re.sub(r'\s*,?\s*(USA|United States)$', '', raw_addr, flags=re.I)
+    raw_addr_clean = regex.sub(r'\s*,?\s*(USA|United States)$', '', raw_addr, flags=regex.I)
+
 
     # Use our helper to split; it handles several common formats
     a1, city, state, postal = _split_us_address(raw_addr_clean)
@@ -809,52 +810,59 @@ def save_comp_rules(property_id: int):
     prop = Property.query.get_or_404(property_id)
 
     def _to_float(v):
-        try:
-            return float(v) if v not in (None, "") else None
-        except Exception:
-            return None
+        try: return float(v) if v not in (None, "") else None
+        except Exception: return None
 
     def _to_int(v):
-        try:
-            return int(float(v)) if v not in (None, "") else None
-        except Exception:
-            return None
+        try: return int(float(v)) if v not in (None, "") else None
+        except Exception: return None
 
     def _to_bool(v):
-        if v is None:
-            return False
+        if v is None: return False
         s = str(v).strip().lower()
         return s not in ("", "0", "false", "no", "off", "none")
 
-    # Read form values (names should match your template inputs)
-    radius             = _to_float(request.form.get("radius" or request.form.get("max_radius_miles")))             # miles
-    
-    max_months         = _to_int(request.form.get("max_months"))           # e.g. 60 for 5 years
-    sqft_tol_pct = _to_float(request.form.get("sqft_tolerance_pct"))
-    sqft_tolerance = (
-        sqft_tol_pct / 100.0
-        if sqft_tol_pct is not None
-        else _to_float(request.form.get("sqft_tolerance")))
+    # ---- read form values ----
+    # allow either "radius" or "max_radius_miles"
+    radius_in = request.form.get("radius") or request.form.get("max_radius_miles")
+    radius = _to_float(radius_in)
 
-    year_tolerance     = _to_int(request.form.get("year_tolerance"))       # e.g. 5 or 10
+    max_months     = _to_int(request.form.get("max_months"))
+
+    # UI sends a PERCENT (e.g., 15 for ±15%)
+    pct = _to_float(request.form.get("sqft_tolerance_pct"))
+    if pct is None:
+        pct = _to_float(request.form.get("sqft_tolerance"))
+    sqft_tolerance = (pct / 100.0) if pct is not None else None
+
+    year_tolerance     = _to_int(request.form.get("year_tolerance"))
     require_subdivision= _to_bool(request.form.get("require_subdivision"))
 
-    # Optional subject overrides
-    subject_sqft       = _to_int(request.form.get("subject_sqft"))
-    subject_year       = _to_int(request.form.get("subject_year"))
-    subject_sub        = (request.form.get("subject_subdivision") or "").strip() or None
+    # ---- sane caps ----
+    if radius is not None:
+        radius = max(0.1, min(5.0, radius))
+    if sqft_tolerance is not None:
+        sqft_tolerance = max(0.01, min(1.0, sqft_tolerance))  # fraction, not percent
+    if max_months is not None:
+        max_months = max(1, min(36, max_months))
+    if year_tolerance is not None:
+        year_tolerance = max(0, min(50, year_tolerance))
 
-    # Safe-load raw json
+    # optional subject overrides
+    subject_sqft = _to_int(request.form.get("subject_sqft"))
+    subject_year = _to_int(request.form.get("subject_year"))
+    subject_sub  = (request.form.get("subject_subdivision") or "").strip() or None
+
+    # save to raw
     try:
         raw = json.loads(prop.raw_json) if prop.raw_json else {}
     except Exception:
         raw = {}
 
-    # Persist rules where the template can also read them back
     rules = {
         "radius": radius,
         "max_months": max_months,
-        "sqft_tolerance": sqft_tolerance,
+        "sqft_tolerance": sqft_tolerance,  # fraction (0.15 = ±15%)
         "year_tolerance": year_tolerance,
         "require_subdivision": require_subdivision,
         "subject_sqft": subject_sqft,
@@ -867,22 +875,22 @@ def save_comp_rules(property_id: int):
     db.session.add(prop)
     db.session.commit()
 
-    # Redirect to ATTOM refresh using GET so the rules apply immediately
+    # redirect into ATTOM refresh (GET)
     q = {}
-    if radius is not None:             q["radius"] = radius
-    if max_months is not None:         q["max_months"] = max_months
-    if sqft_tolerance is not None:     q["sqft_tolerance"] = sqft_tolerance
-    if year_tolerance is not None:     q["year_tolerance"] = year_tolerance
-    if require_subdivision:            q["require_subdivision"] = "1"
-    if subject_sqft is not None:       q["subject_sqft"] = subject_sqft
-    if subject_year is not None:       q["subject_year"] = subject_year
-    if subject_sub:                    q["subject_subdivision"] = subject_sub
+    if radius is not None:         q["radius"] = radius
+    if max_months is not None:     q["max_months"] = max_months
+    if sqft_tolerance is not None: q["sqft_tolerance"] = sqft_tolerance
+    if year_tolerance is not None: q["year_tolerance"] = year_tolerance
+    if require_subdivision:        q["require_subdivision"] = "1"
+    if subject_sqft is not None:   q["subject_sqft"] = subject_sqft
+    if subject_year is not None:   q["subject_year"] = subject_year
+    if subject_sub:                q["subject_subdivision"] = subject_sub
 
     flash("Comp rules saved.", "success")
     return redirect(url_for("main.enrich_attom", property_id=prop.id, **q))
 
 
-@main.route("/properties/<int:property_id>/enrich_attom", methods=["POST"])
+@main.route("/properties/<int:property_id>/enrich_attom", methods=["GET", "POST"])
 def enrich_attom(property_id):
     prop = Property.query.get_or_404(property_id)
 
@@ -899,10 +907,43 @@ def enrich_attom(property_id):
     except Exception:
         raw = {}
 
-    # Clean/split address (address-only; no lat/lon in params)
+    # -------- FIX: build & clean the address --------
     raw_addr = (prop.full_address or prop.address or "").strip()
-    raw_addr = re.sub(r"\s*,?\s*(USA|United States)$", "", raw_addr, flags=re.I)
+    raw_addr = regex.sub(r"\s*,?\s*(USA|United States)$", "", raw_addr, flags=regex.I)
+
     a1, city, state, postal = _split_us_address(raw_addr)
+
+        # Saved rules (with fallbacks)
+    rules = (raw.get("comp_rules") or {})
+    def _to_float(v):
+        try: return float(v)
+        except Exception: return None
+    def _to_int(v):
+        try: return int(float(v))
+        except Exception: return None
+
+    # Percent in UI; store fraction internally
+    sqft_tol = rules.get("sqft_tolerance")
+    if sqft_tol is None:
+        sqft_tol = 0.15
+    # Cap to [0.01, 1.0] (1.0 == ±100%)
+    sqft_tol = max(0.01, min(1.0, float(sqft_tol)))
+
+    max_months = _to_int(rules.get("max_months")) or 6
+    max_months = max(1, min(36, max_months))
+
+    radius = _to_float(rules.get("radius"))
+    if radius is None:
+        radius = 0.5
+    # Huge radii cause timeouts; cap to something reasonable
+    radius = max(0.1, min(5.0, radius))
+
+    year_tol = _to_int(rules.get("year_tolerance")) or 5
+    year_tol = max(0, min(50, year_tol))
+
+    require_subdivision = bool(rules.get("require_subdivision"))
+
+
 
     # 1) Property detail (get coords + rich facts)
     try:
@@ -927,11 +968,10 @@ def enrich_attom(property_id):
 
     subject_sub = None
     try:
-        # Melissa: LookupProperty → Records[0].Legal.Subdivision
         subject_sub = (((raw.get("melissa") or {}).get("LookupProperty") or {})
                         .get("Records") or [])[0].get("Legal", {}).get("Subdivision")
     except Exception:
-        subject_sub = None
+        pass
 
     # 2) AVM + Rental AVM (ADDRESS ONLY)
     try:
@@ -944,39 +984,139 @@ def enrich_attom(property_id):
     except Exception as e:
         rent_payload = {"_error": str(e)}
 
-    # 3) Comps — prefer coordinates; fallback to address (tight defaults)
+    # Determine the subject property kind so we compare apples to apples
+    subject_kind = None
     try:
-        # allow override via form, else use 0.5 mi
+        m_records = (((raw.get("melissa") or {}).get("LookupProperty") or {}).get("Records") or [])
+        if m_records:
+            pu = (m_records[0].get("PropertyUseInfo") or {})
+            subject_kind = pu.get("PropertyUseGroup") or pu.get("PropertyUse") or None
+    except Exception:
+        pass
+    if not subject_kind:
         try:
-            radius = float(request.values.get("radius", 0.5) or 0.5)
+            _summ = (((detail_payload or {}).get("property") or [{}])[0].get("summary") or {})
+            subject_kind = _summ.get("propLandUse") or _summ.get("propertyType") or _summ.get("propclass")
         except Exception:
-            radius = 0.5
+            pass
 
+    # 3) Comps — prefer coords; RETRY with smaller search on failure/timeouts
+    def _fetch_comps(r, m):
         if lat not in (None, "", "null") and lon not in (None, "", "null"):
-            comps_payload = attom_svc.sale_comps(
-                lat=float(lat), lon=float(lon),
-                radius_miles=radius, page_size=50, last_n_months=6
-            )
-        else:
-            comps_payload = attom_svc.sale_comps(
-                address1=a1, city=city, state=state, postalcode=postal,
-                radius_miles=radius, page_size=50, last_n_months=6
-            )
-    except Exception as e:
-        comps_payload = {"_error": str(e)}
+            return attom_svc.sale_comps(lat=float(lat), lon=float(lon),
+                                        radius_miles=r, page_size=50, last_n_months=m)
+        return attom_svc.sale_comps(address1=a1, city=city, state=state, postalcode=postal,
+                                    radius_miles=r, page_size=50, last_n_months=m)
 
-    # Normalize comps, then apply rules
+    try:
+        comps_payload = _fetch_comps(radius, max_months)
+        # If ATTOM responds but with no properties, consider retrying once
+        if not isinstance(comps_payload, dict) or not (comps_payload.get("property") or []):
+            raise RuntimeError("empty comps")
+    except Exception as e1:
+        current_app.logger.warning("ATTOM sale_comps failed (%s). Retrying smaller...", e1)
+        try:
+            comps_payload = _fetch_comps(min(1.0, radius), min(12, max_months))
+        except Exception as e2:
+            comps_payload = {"_error": str(e2), "property": []}
+
+    # ---- Backfill price / sale date / type from raw payload ----
+        # ---- Extract comps & backfill price/date/type ----
     comps = attom_svc.extract_comps(comps_payload, max_items=50)
+
+    def _addr_key(line):
+        return regex.sub(r"\s+", " ", (line or "").strip().lower())
+
+    def _key_from_fields(a1, city, st, zipc):
+        parts = []
+        if a1: parts.append(a1)
+        if city or st: parts.append(", ".join([p for p in [city, st] if p]))
+        if zipc: parts.append(zipc)
+        return _addr_key(" ".join(parts))
+
+    raw_index = {}
+    for p in (comps_payload.get("property") or []):
+        addr = p.get("address") or {}
+        line = (addr.get("oneLine")
+                or f"{addr.get('line1') or ''}, {addr.get('locality') or ''}, {addr.get('countrySubd') or ''} {addr.get('postal1') or addr.get('postalcode') or ''}")
+        sale = (p.get("sale") or {})
+        amt  = (sale.get("amount") or {})
+        summary = p.get("summary") or {}
+        raw_index[_addr_key(line)] = {
+            "price": amt.get("saleamt"),
+            "saleDate": sale.get("saleTransDate") or amt.get("salerecdate") or sale.get("salesearchdate"),
+            "ptype": (summary.get("propertyType") or summary.get("proptype")
+                      or summary.get("propclass") or summary.get("propLandUse")),
+        }
+
+    def _addr_key_for_comp(c):
+        loc = (c.get("location") or {}).get("address", {}) if isinstance(c, dict) else {}
+        a1c  = c.get("address1") or c.get("address") or loc.get("line")
+        cc   = c.get("city") or loc.get("city")
+        st   = c.get("state") or loc.get("state")
+        zipc = c.get("postalcode") or c.get("postalCode") or loc.get("postalCode")
+        return _key_from_fields(a1c, cc, st, zipc)
+
+    for c in comps:
+        if c.get("price") in (None, "", "—"):
+            info = raw_index.get(_addr_key_for_comp(c)) or {}
+            price = ((c.get("sale") or {}).get("amount") or {}).get("saleamt") \
+                    or (c.get("amount") or {}).get("saleamt") \
+                    or c.get("saleamt") or c.get("lastSalePrice") \
+                    or info.get("price")
+            try:
+                if price is not None:
+                    c["price"] = float(price)
+            except Exception:
+                pass
+        if not c.get("saleDate"):
+            info = raw_index.get(_addr_key_for_comp(c)) or {}
+            if info.get("saleDate"):
+                c["saleDate"] = info["saleDate"]
+        if not any(k in c for k in ("propertyType","propclass","proptype","propLandUse")):
+            info = raw_index.get(_addr_key_for_comp(c)) or {}
+            if info.get("ptype"):
+                c["propertyType"] = info["ptype"]
+
+    # ---- type-normalization & filter by subject kind ----
+    def _canon_kind(val):
+        s = str(val or "").lower()
+        if "single" in s or "sfr" in s: return "sfr"
+        if "condo" in s: return "condo"
+        if "town"  in s: return "townhouse"
+        if "duplex" in s or "triplex" in s or "quad" in s or "multi" in s: return "multi"
+        if "manufactured" in s or "mobile" in s: return "manufactured"
+        return None
+
+    subj_summary = {}
+    try:
+        subj_summary = ((detail_payload or {}).get("property") or [{}])[0].get("summary") or {}
+    except Exception:
+        pass
+    subject_kind = _canon_kind(
+        basics.get("propertyType") or basics.get("proptype") or basics.get("propclass")
+        or basics.get("propLandUse") or subj_summary.get("propertyType")
+        or subj_summary.get("proptype") or subj_summary.get("propclass") or subj_summary.get("propLandUse")
+    )
+
+    def _comp_kind(c):
+        return _canon_kind(c.get("propertyType") or c.get("propclass")
+                           or c.get("proptype") or c.get("propsubtype") or c.get("propLandUse"))
+
+    if subject_kind:
+        comps = [c for c in comps if (_comp_kind(c) in (None, subject_kind))]
+
+    # ---- apply numeric/date/radius rules (use your saved rule values) ----
     good_comps = attom_svc.filter_comps_rules(
         comps,
         subject_sqft=subject_sqft,
         subject_year=subject_year,
         subject_subdivision=subject_sub,
-        max_months=6,
-        max_radius_miles=0.5,
-        sqft_tolerance=0.15,
-        year_tolerance=5,
-        require_subdivision=bool(subject_sub),  # require match if we know the subdivision
+        max_months=max_months,
+        max_radius_miles=radius,
+        sqft_tolerance=sqft_tol,         # fraction
+        year_tolerance=year_tol,
+        require_subdivision=require_subdivision,
     )
 
     # 4) Schools (address-only)
@@ -987,11 +1127,9 @@ def enrich_attom(property_id):
 
     # ----- Activity log entries (ATTOM) -----
     if isinstance(detail_payload, dict):
-        _log(
-            raw, source="ATTOM", event="property_detail",
-            status=(detail_payload.get("status", {}) or {}).get("code", "ok"),
-            note="property/detail", meta={"has_property": bool((detail_payload or {}).get("property"))},
-        )
+        _log(raw, source="ATTOM", event="property_detail",
+             status=(detail_payload.get("status", {}) or {}).get("code", "ok"),
+             note="property/detail", meta={"has_property": bool((detail_payload or {}).get("property"))})
     if isinstance(avm_payload, dict):
         status_code = (avm_payload.get("status") or {}).get("code", "ok")
         try:
@@ -1014,16 +1152,24 @@ def enrich_attom(property_id):
              status=(schools_payload.get("status") or {}).get("code", "ok"),
              note="property/detailwithschools")
 
-    # Save raw
+    # ----- Save raw (preserve previous snapshot on failure) -----
     raw.setdefault("attom", {})
+    prev_snapshot = (raw.get("attom") or {}).get("sale_snapshot")
+
     raw["attom"] = {
         "detail": detail_payload,
         "avm": avm_payload,
         "rental_avm": rent_payload,
-        "sale_snapshot": comps_payload,
+        "sale_snapshot": (
+            comps_payload
+            if (isinstance(comps_payload, dict) and (comps_payload.get("property") or []))
+            else (prev_snapshot or comps_payload)
+        ),
         "detail_with_schools": schools_payload,
         "as_of": datetime.utcnow().strftime("%Y-%m-%d"),
     }
+
+
 
     # Light extracts for UI (store FILTERED comps)
     v, lo, hi, avm_asof, conf = attom_svc.extract_avm_numbers(avm_payload)
@@ -1031,7 +1177,7 @@ def enrich_attom(property_id):
     raw["attom_extract"] = {
         "avm": {"value": v, "low": lo, "high": hi, "as_of": avm_asof, "confidence": conf},
         "rental_avm": {"value": rv, "low": rlo, "high": rhi, "as_of": r_asof},
-        "comps": good_comps,  # << filtered comps shown in UI
+        "comps": good_comps,
         "schools": attom_svc.extract_schools(schools_payload, max_items=5),
     }
 
@@ -1104,6 +1250,35 @@ def comps_ai_select(property_id):
     if not candidates:
         snap = (raw.get("attom") or {}).get("sale_snapshot") or {}
         candidates = attom_svc.extract_comps(snap, max_items=100)
+
+    # Type-aware filtering for AI candidates
+    def _canon_kind(val):
+        s = str(val or "").lower()
+        if "single" in s or "sfr" in s: return "sfr"
+        if "condo" in s: return "condo"
+        if "town"  in s: return "townhouse"
+        if "duplex" in s or "triplex" in s or "quad" in s or "multi" in s: return "multi"
+        if "manufactured" in s or "mobile" in s: return "manufactured"
+        return None
+
+    def _comp_kind(c):
+        return _canon_kind(c.get("propertyType") or c.get("propclass")
+                           or c.get("proptype") or c.get("propsubtype") or c.get("propLandUse"))
+
+    # Subject kind from ATTOM detail if present
+    try:
+        d = ((raw.get("attom") or {}).get("detail") or {}).get("property") or []
+        subj_summary = (d[0] or {}).get("summary") if d else {}
+    except Exception:
+        subj_summary = {}
+    subject_kind = _canon_kind(
+        subj_summary.get("propertyType") or subj_summary.get("proptype")
+        or subj_summary.get("propclass") or subj_summary.get("propLandUse")
+    )
+
+    if subject_kind:
+        candidates = [c for c in candidates if (_comp_kind(c) in (None, subject_kind))]
+
 
     subj = {
         "address": prop.full_address or prop.address,
