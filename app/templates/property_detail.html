@@ -581,7 +581,6 @@
             <span class="badge bg-light text-muted ms-1">as of {{ ax.get('as_of') }}</span>
           {% endif %}
         </div>
-
         <div class="col-md-3"><strong>ATTOM Rent AVM</strong>:
           {{ rx.get('value') | currency if rx.get('value') is not none else "—" }}
           {% if rx.get('low') and rx.get('high') %}
@@ -591,21 +590,21 @@
             <span class="badge bg-light text-muted ms-1">as of {{ rx.get('as_of') }}</span>
           {% endif %}
         </div>
-
         <div class="col-md-3"><strong>Zestimate</strong> (Z):
           {{ raw_z.get('zestimate') | currency if raw_z.get('zestimate') is not none else "—" }}
         </div>
-
         <div class="col-md-3"><strong>Melissa AVM</strong>:
           {{ mx.get('value') | currency if mx.get('value') is not none else "—" }}
           {% if mx.get('low') and mx.get('high') %}
             <span class="text-muted"> ({{ mx.get('low')|currency }}–{{ mx.get('high')|currency }})</span>
+        
           {% endif %}
           {% if mx.get('as_of') %}
             <span class="badge bg-light text-muted ms-1">as of {{ mx.get('as_of') }}</span>
           {% endif %}
         </div>
       </div>
+      
 
       <div class="row g-2 mt-2">
         <div class="col-md-3"><span class="text-muted small">
@@ -630,7 +629,42 @@
       </div>
     </div>
   </div>
-
+  {# ---- PLACE THE AI ARV CARD AFTER the Estimates card ---- #}
+  {% if arv_pack and arv_pack.arv is not none %}
+    <div class="card mb-3">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span>AI ARV (from comps)</span>
+        <span class="badge bg-light text-muted">{{ arv_notes }}</span>
+      </div>
+      <div class="card-body">
+        <div class="row g-2">
+          <div class="col-md-3"><strong>ARV</strong>: {{ arv_pack.arv | currency }}</div>
+          <div class="col-md-3">
+            <strong>Range</strong>:
+            {{ arv_pack.low | currency if arv_pack.low is not none else "—" }}
+            –
+            {{ arv_pack.high | currency if arv_pack.high is not none else "—" }}
+          </div>
+          <div class="col-md-6">
+            <span class="text-muted small">
+              Used comps:
+              {% if arv_pack.used and (ai_comps or comps_list) %}
+                {% set src = ai_comps if ai_comps else comps_list %}
+                {% for i in arv_pack.used %}
+                  {% set c = src[i] if i < src|length else None %}
+                  {% if c %}
+                    <span class="me-2">{{ (c._addr_line or c.address) or ('Comp ' ~ i) }}</span>
+                  {% endif %}
+                {% endfor %}
+              {% else %}—{% endif %}
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  {% elif arv_notes %}
+    <div class="alert alert-secondary small mb-3">{{ arv_notes }}</div>
+  {% endif %}
   <div class="row g-2 mt-2">
     <div class="col-md-3"><strong>Estimated Melissa Value</strong> (M): {{ valuation.get('EstimatedValue') | currency if valuation.get('EstimatedValue') is not none else (taxnode.get('AssessedValueTotal') | currency if taxnode.get('AssessedValueTotal') is not none else "—") }}</div>
     <div class="col-md-3"><strong>Estimated Repairs</strong> (C): {{ est_repairs if est_repairs else "—" }}</div>

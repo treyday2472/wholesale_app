@@ -9,6 +9,7 @@ from flask import (
 from .services import attom as attom_svc
 from datetime import datetime
 from math import radians, sin, cos, asin, sqrt
+from .services.ai import suggest_arv
 
 
 from .services.attom import AttomError
@@ -497,6 +498,8 @@ def property_detail(property_id: int):
     comps_list = attx.get("comps") or []
     ai_comps   = attx.get("comps_selected") or []
 
+    
+
     def _addr_parts(c):
         loc = (c.get("location") or {}).get("address", {}) if isinstance(c, dict) else {}
         a1   = c.get("address1") or c.get("address") or loc.get("line")
@@ -520,6 +523,22 @@ def property_detail(property_id: int):
             c["_addr_line"] = _addr_line(a1, city, st, zipc)
             c["zillow_url"] = _zillow_url_from_address(a1, city, st, zipc)
 
+    comp_source = ai_comps if ai_comps else comps_list
+
+    subject = {
+    "address": prop.full_address or prop.address,
+    "beds": prop.beds,
+    "baths": prop.baths,
+    "sqft": prop.sqft,
+    "yearBuilt": prop.year_built,
+    "lat": prop.lat,
+    "lng": prop.lng,
+}
+
+    arv_pack, arv_notes = suggest_arv(subject, comp_source, k=6)
+
+    
+
     # pass ai_comps to the template
     return render_template(
         "property_detail.html",
@@ -529,8 +548,12 @@ def property_detail(property_id: int):
         comps_list=comps_list,
         ai_comps=ai_comps,               # <-- keep this
         raw=raw,
+        arv_pack=arv_pack,          # <-- add
+        arv_notes=arv_notes,        # <-- add
         GOOGLE_MAPS_API_KEY=current_app.config.get("GOOGLE_MAPS_API_KEY", "")
     )
+
+
 
 
 
@@ -1148,16 +1171,16 @@ def enrich_attom(property_id):
 
     # ---- apply numeric/date/radius rules (use your saved rule values) ----
     good_comps = attom_svc.filter_comps_rules(
-        comps,
-        subject_sqft=subject_sqft,
-        subject_year=subject_year,
-        subject_subdivision=subject_sub,
-        max_months=max_months,
-        max_radius_miles=radius,
-        sqft_tolerance=sqft_tol,         # fraction
-        year_tolerance=year_tol,
-        require_subdivision=require_subdivision,
-    )
+    comps,
+    subject_sqft=subject_sqft,
+    subject_year=subject_year,
+    subject_subdivision=subject_sub,
+    max_months=max_months,
+    max_radius_miles=radius,
+    sqft_tolerance=sqft_tol,
+    year_tolerance=year_tol,
+    require_subdivision=require_subdivision,
+)
 
     # 4) Schools (address-only)
     try:
@@ -1429,5 +1452,8 @@ def property_update(property_id):
 
     flash("Saved changes and locks.", "success")
     return redirect(url_for("main.property_detail", property_id=prop.id))
+
+
+
 
 
