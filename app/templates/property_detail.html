@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_macros.html" as ui %}
 {% block title %}Property {{ prop.id }}{% endblock %}
 
 
@@ -6,6 +7,21 @@
 
 
 {% block content %}
+
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <div>
+    <h2 class="mb-0">{{ property.full_address or property.address or 'Property' }}</h2>
+    {% if property.leads and property.leads[0] %}
+      <div class="small text-muted">
+        Lead: {{ property.leads[0].seller_first_name }} {{ property.leads[0].seller_last_name or '' }} ·
+        Status: {{ ui.status_badge(property.leads[0].lead_status) }}
+      </div>
+    {% endif %}
+  </div>
+  <div>
+    <a class="btn btn-outline-light" href="{{ url_for('main.leads_list', q=(property.address or '')) }}">Back to Leads</a>
+  </div>
+</div>
 {# ---------- snapshot/raw helpers ---------- #}
 {% set snap      = snapshot or {} %}
 {% set meta      = snap.get('meta', {}) %}

@@ -1,10 +1,14 @@
 # --- imports ---
+from __future__ import annotations
 import os
 import json
 from flask import (
     Blueprint, render_template, redirect, url_for,
     request, flash, current_app, session, jsonify
 )
+
+
+
 
 from .services import attom as attom_svc
 from datetime import datetime
@@ -18,6 +22,7 @@ import re as regex
 from werkzeug.utils import secure_filename
 from wtforms.validators import Optional  # relaxing validators after 3 tries
 
+from .services.auto_offer import auto_enrich_and_offer_for_lead
 
 from . import db
 from .models import Lead, Buyer, Property
@@ -148,6 +153,15 @@ def lead_new_step1():
         GOOGLE_MAPS_API_KEY=current_app.config.get('GOOGLE_MAPS_API_KEY', '')
     )
 
+
+
+
+
+
+
+
+
+
 @main.route('/lead/new/step2', methods=['GET', 'POST'])
 def lead_new_step2():
     step1 = session.get('lead_step1')
@@ -157,10 +171,11 @@ def lead_new_step2():
 
     form = LeadStep2Form()
 
-    # Initialize attempts once
+    # Initialize attempts on GET (so the hidden field has a value)
     if request.method == 'GET' and not (form.attempts_count.data or "").strip():
         form.attempts_count.data = '0'
 
+    # Parse current attempts for this POST cycle
     attempts = 0
     if request.method == 'POST':
         try:
@@ -168,15 +183,43 @@ def lead_new_step2():
         except Exception:
             attempts = 0
 
-        # Relax validators after 3 failed tries
+        # After 3 tries, relax a few fields
         if attempts >= 3:
             for f in (form.occupancy_status, form.listed_with_realtor, form.condition):
                 f.validators = [Optional()]
 
         if form.validate():
-            # Use default condition "7" if user hit 3 tries and still left it blank
+            # Use default condition "7" if blank and we've already given grace
             cond_value = form.condition.data or ("7" if attempts >= 3 else None)
 
+            # --- handle uploads (photos/attachments) early so we can store names on the lead ---
+            upload_dir = current_app.config.get(
+                'UPLOAD_FOLDER',
+                os.path.join(current_app.static_folder, 'uploads')
+            )
+            os.makedirs(upload_dir, exist_ok=True)
+            saved_files = []
+
+            files = []
+            if 'attachments' in request.files:
+                files.extend(request.files.getlist('attachments'))
+            if 'photos' in request.files:
+                files.extend(request.files.getlist('photos'))
+
+            for file in files:
+                if not file or not getattr(file, 'filename', ''):
+                    continue
+                filename = secure_filename(file.filename)
+                base, ext = os.path.splitext(filename)
+                final = filename
+                i = 1
+                while os.path.exists(os.path.join(upload_dir, final)):
+                    final = f"{base}_{i}{ext}"
+                    i += 1
+                file.save(os.path.join(upload_dir, final))
+                saved_files.append(final)
+
+            # --- create the lead ---
             lead = Lead(
                 seller_first_name = step1['seller_first_name'],
                 seller_last_name  = step1.get('seller_last_name') or None,
@@ -184,12 +227,13 @@ def lead_new_step2():
                 phone             = step1['phone'],
                 address           = step1['address'],
                 occupancy_status  = form.occupancy_status.data or None,
-                condition         = cond_value,  # <-- use the default if needed
+                condition         = cond_value,  # may be "7" default
                 notes             = (form.notes.data or '').strip() or None,
                 lead_source       = "Web Form",
             )
 
-            intake = {
+            # mirror structured intake (keep lightweight; strings preferred)
+            lead.intake = {
                 "why_sell": form.why_sell.data,
                 "occupancy_status": form.occupancy_status.data,
                 "rent_amount": form.rent_amount.data,
@@ -199,7 +243,7 @@ def lead_new_step2():
                 "vacant_units": form.vacant_units.data,
                 "listed_with_realtor": form.listed_with_realtor.data,
                 "list_price": form.list_price.data,
-                "condition": cond_value,  # mirror the saved value
+                "condition": cond_value,
                 "repairs_needed": form.repairs_needed.data,
                 "repairs_cost_est": form.repairs_cost_est.data,
                 "worth_estimate": form.worth_estimate.data,
@@ -218,58 +262,36 @@ def lead_new_step2():
                 "how_hear_about_us": form.how_hear_about_us.data,
                 "how_hear_other": form.how_hear_other.data,
             }
-            lead.intake = intake
 
+            if saved_files:
+                lead.image_files = ",".join(saved_files)
+
+            # Commit once to get lead.id
             db.session.add(lead)
             db.session.commit()
 
-            # Handle uploads (attachments/photos)
-            upload_dir = current_app.config.get('UPLOAD_FOLDER', os.path.join(current_app.static_folder, 'uploads'))
-            os.makedirs(upload_dir, exist_ok=True)
-            saved_files = []
-            files = []
-            if 'attachments' in request.files:
-                files.extend(request.files.getlist('attachments'))
-            if 'photos' in request.files:
-                files.extend(request.files.getlist('photos'))
-            for file in files:
-                if not file or not getattr(file, 'filename', ''):
-                    continue
-                filename = secure_filename(file.filename)
-                base, ext = os.path.splitext(filename)
-                final = filename
-                i = 1
-                while os.path.exists(os.path.join(upload_dir, final)):
-                    final = f"{base}_{i}{ext}"
-                    i += 1
-                file.save(os.path.join(upload_dir, final))
-                saved_files.append(final)
-            if saved_files:
-                lead.image_files = ",".join(saved_files)
-            db.session.commit()
-
-            # Create a Property record (Zillow basics happen on manual property_new;
-            # we keep lead flow simple)
-            full_address = step1.get('full_address') or lead.address
-            lat = step1.get('lat'); lng = step1.get('lng')
+            # --- 🔥 Auto-enrich → Property → Initial Offers (cash + owner-fin) ---
             try:
-                lat = float(lat) if lat not in (None, "", "None") else None
-                lng = float(lng) if lng not in (None, "", "None") else None
-            except Exception:
-                lat = None; lng = None
+                result = auto_enrich_and_offer_for_lead(lead.id)
+                if result.get("ok"):
+                    flash("Lead saved and initial offers generated.", "success")
+                else:
+                    current_app.logger.warning("Auto-offer failed: %s", result.get("error"))
+                    flash("Lead saved. Auto-offer enrich failed; you can create offers manually.", "warning")
+            except Exception as e:
+                current_app.logger.exception("auto_enrich_and_offer_for_lead threw: %s", e)
+                flash("Lead saved. Auto-offer failed; you can create offers manually.", "warning")
 
-            prop = Property(
-                address=lead.address,
-                full_address=full_address,
-                lat=lat, lng=lng,
-                source="from_lead",
-            )
-            db.session.add(prop)
-            db.session.commit()
-
+            # cleanup step 1 state & go to lead detail
             session.pop('lead_step1', None)
-            flash("Thanks! Your information has been submitted.", "success")
-            return redirect(url_for('main.thank_you'))
+            return redirect(url_for("main.lead_detail", lead_id=lead.id))
+
+        else:
+            # bump attempts on failed validation to relax next time if needed
+            try:
+                form.attempts_count.data = str(attempts + 1)
+            except Exception:
+                form.attempts_count.data = "1"
 
     # GET or invalid POST → re-render (form retains values & field errors)
     return render_template('lead_step2.html', form=form)
@@ -563,6 +585,7 @@ def property_detail(property_id: int):
     return render_template(
         "property_detail.html",
         prop=prop,
+        property=prop,
         snapshot=snapshot,
         est_repairs=est_repairs,
         comps_list=comps_list,
@@ -570,7 +593,8 @@ def property_detail(property_id: int):
         raw=raw,
         arv_pack=arv_pack,
         arv_notes=arv_notes,
-        GOOGLE_MAPS_API_KEY=current_app.config.get("GOOGLE_MAPS_API_KEY", "")
+        GOOGLE_MAPS_API_KEY=current_app.config.get("GOOGLE_MAPS_API_KEY", ""),
+        lead_for_prop=lead_for_prop,
     )
 
 @main.route('/properties/<int:property_id>/delete', methods=['POST'])

@@ -1,0 +1,20 @@
+<!doctype html>
+<html>
+  <body style="font-family: Arial, sans-serif;">
+    <p>Hi {{ lead.seller_first_name or 'there' }},</p>
+    <p>
+      Based on a quick look at <strong>{{ lead.address }}</strong> and a
+      condition of {{ offer.condition_1_10 }}/10, our preliminary cash offer
+      is <strong>{{ offer.my_cash_offer|currency }}</strong>.
+    </p>
+    <p>
+      This is a sight-unseen estimate using an ARV of {{ offer.arv|currency }}
+      and repair allowance of {{ offer.repairs_flip|currency }}.
+    </p>
+    <p>
+      Want to proceed or send photos/video for a firm offer? Just reply to this email
+      or call/text {{ SUPPORT_PHONE or '' }}.
+    </p>
+    <p>— DealBot Acquisitions</p>
+  </body>
+</html>

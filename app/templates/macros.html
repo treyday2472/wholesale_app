@@ -1,0 +1,55 @@
+{# app/templates/_macros.html #}
+{% macro money(v, none='—') -%}
+  {%- set x = (v if v is not none else none) -%}
+  {%- if x is string -%}{{ x }}{%- elif x is number -%}${{ '{:,.0f}'.format(x) }}{%- else -%}{{ none }}{%- endif -%}
+{%- endmacro %}
+
+{% macro pct(v, none='—', decimals=1) -%}
+  {%- if v is number -%}{{ ('{0:.' ~ decimals ~ 'f}%').format(v*100 if v < 1 else v) }}{%- else -%}{{ none }}{%- endif -%}
+{%- endmacro %}
+
+{% macro dt(s, none='—') -%}
+  {%- if s -%}{{ (s|string)[:10] }}{%- else -%}{{ none }}{%- endif -%}
+{%- endmacro %}
+
+{% macro yesno(v) -%}
+  {%- if v in (true, 'true', 'True', 1, '1', 'yes', 'Yes') -%}Yes{%- elif v in (false, 'false', 'False', 0, '0', 'no', 'No') -%}No{%- else -%}—{%- endif -%}
+{%- endmacro %}
+
+{% macro kv(label, value, cls='') -%}
+  <div class="kv {{ cls }}"><strong>{{ label }}:</strong> {{ value if value is not none and value != '' else '—' }}</div>
+{%- endmacro %}
+
+{% macro badge(text, cls='badge bg-secondary') -%}
+  <span class="{{ cls }}">{{ text }}</span>
+{%- endmacro %}
+
+{% macro chip(text) -%}
+  <span style="display:inline-block;padding:.15rem .5rem;border:1px solid #ddd;border-radius:999px;font-size:.85rem">{{ text }}</span>
+{%- endmacro %}
+
+{% macro link(label, url, blank=true) -%}
+  {%- if url -%}
+    <a href="{{ url }}" {{ 'target=_blank rel=noopener' if blank else '' }}>{{ label }}</a>
+  {%- else -%}{{ label }}{%- endif -%}
+{%- endmacro %}
+
+{% macro addr(a1, city='', st='', zip='') -%}
+  {%- set parts = [] -%}
+  {%- if a1 %}{% set _ = parts.append(a1) %}{% endif -%}
+  {%- if city or st %}{% set _ = parts.append([city, st]|reject('equalto','')|join(', ')) %}{% endif -%}
+  {%- if zip %}{% set _ = parts.append(zip) %}{% endif -%}
+  {{ parts|reject('equalto','')|join(' ') }}
+{%- endmacro %}
+
+{% macro code(obj) -%}
+  <pre style="white-space:pre-wrap">{{ obj|tojson(indent=2) }}</pre>
+{%- endmacro %}
+
+{% macro photo(src, alt='', w=160, h='auto') -%}
+  {%- if src -%}<img src="{{ src }}" alt="{{ alt }}" style="max-width:100%;width:{{ w }}px;height:{{ h }}">{%- endif -%}
+{%- endmacro %}
+
+{% macro zillow_link(address, url) -%}
+  {%- if url -%}<a href="{{ url }}" target="_blank" rel="noopener">Zillow: {{ address }}</a>{%- else -%}{{ address }}{%- endif -%}
+{%- endmacro %}

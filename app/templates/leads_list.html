@@ -17,7 +17,7 @@
   <div class="col-md-3">
     <select name="status" class="form-select">
       {% for s in statuses %}
-        <option value="{{ s }}" {% if status==s %}selected{% endif %}>
+        <option value="{{ s }}" {% if status == s %}selected{% endif %}>
           {{ s if s else "All statuses" }}
         </option>
       {% endfor %}
@@ -28,11 +28,9 @@
   </div>
 </form>
 
-{# ---- helpers ---- #}
+{# ---------- helpers ---------- #}
 {% macro status_badge_class(s) -%}
-  {# Normalize once #}
   {%- set t = (s or '')|lower -%}
-  {# quick buckets by prefix/keywords #}
   {%- if t == 'new lead' -%}bg-info
   {%- elif 'contacted' in t -%}bg-primary
   {%- elif 'inspection' in t -%}bg-warning
@@ -45,7 +43,7 @@
 {%- endmacro %}
 
 <div class="table-responsive">
-  <table class="table table-dark table-striped align-middle">
+  <table class="table table-dark table-striped align-middle mb-0">
     <thead>
       <tr>
         <th style="width:70px;">ID</th>
@@ -60,20 +58,17 @@
     <tbody>
     {% if leads %}
       {% for lead in leads %}
-        {% set pid = lead.property_id if lead.property_id is defined else None %}
+        {% set pid = (lead.property_id if (lead is defined and lead.property_id is defined) else None) %}
         <tr>
           <td>#{{ lead.id }}</td>
 
-          {# FIX: trim the whole concatenation, not just last token #}
           <td>{{ ((lead.seller_first_name or '') ~ ' ' ~ (lead.seller_last_name or '')) | trim or '—' }}</td>
 
           <td>
             {% if lead.phone %}
-              {% set normalized = (lead.phone | replace(' ', '') | replace('(', '') | replace(')', '') | replace('-', '')) %}
+              {% set normalized = lead.phone|replace(' ', '')|replace('(', '')|replace(')', '')|replace('-', '') %}
               <a class="link-light text-decoration-none" href="tel:{{ normalized }}">{{ lead.phone }}</a>
-            {% else %}
-              —
-            {% endif %}
+            {% else %}—{% endif %}
           </td>
 
           <td>{{ lead.address or '—' }}</td>
@@ -83,39 +78,27 @@
             <span class="badge {{ status_badge_class(lbl) }}">{{ lbl }}</span>
           </td>
 
-          <td>{{ lead.lead_source or '' }}</td>
+          <td>{{ lead.lead_source or '—' }}</td>
 
           <td class="text-end text-nowrap">
             <div class="btn-group" role="group">
               <a class="btn btn-sm btn-light"
-                 href="{{ url_for('main.lead_detail', lead_id=lead.id) }}">
-                Open
-              </a>
+                 href="{{ url_for('main.lead_detail', lead_id=lead.id) }}">Open</a>
 
-              {# Offer: create tied to this lead (and property if present) #}
               {% if pid %}
                 <a class="btn btn-sm btn-primary"
-                   href="{{ url_for('offers.new_offer', lead_id=lead.id, property_id=pid) }}">
-                  Offer
-                </a>
+                   href="{{ url_for('offers.new_offer', lead_id=lead.id, property_id=pid) }}">Offer</a>
               {% else %}
                 <a class="btn btn-sm btn-primary"
-                   href="{{ url_for('offers.new_offer', lead_id=lead.id) }}">
-                  Offer
-                </a>
+                   href="{{ url_for('offers.new_offer', lead_id=lead.id) }}">Offer</a>
               {% endif %}
 
-              {# Property: go to specific property if linked, else search properties by address #}
               {% if pid %}
                 <a class="btn btn-sm btn-outline-secondary"
-                   href="{{ url_for('main.property_detail', property_id=pid) }}">
-                  Property
-                </a>
+                   href="{{ url_for('main.property_detail', property_id=pid) }}">Property</a>
               {% else %}
                 <a class="btn btn-sm btn-outline-secondary"
-                   href="{{ url_for('main.properties_list', q=(lead.address or '')) }}">
-                  Find Property
-                </a>
+                   href="{{ url_for('main.properties_list', q=(lead.address or '')) }}">Find Property</a>
               {% endif %}
             </div>
 
@@ -123,18 +106,16 @@
                   action="{{ url_for('main.delete_lead', lead_id=lead.id) }}"
                   class="d-inline-block ms-2"
                   onsubmit="return confirm({{ (
-                    'Delete lead #' ~ lead.id ~ ' — ' ~ ((lead.seller_first_name or '') ~ ' ' ~ (lead.seller_last_name or '')) ~ '?'
+                    'Delete lead #' ~ lead.id ~ ' — ' ~ (((lead.seller_first_name or '') ~ ' ' ~ (lead.seller_last_name or '')) | trim) ~ '?'
                   ) | tojson }});">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <button class="btn btn-sm btn-outline-danger">Delete</button>
             </form>
-
-
           </td>
         </tr>
       {% endfor %}
     {% else %}
-        <tr><td colspan="7" class="text-center">No leads found.</td></tr>
+      <tr><td colspan="7" class="text-center">No leads found.</td></tr>
     {% endif %}
     </tbody>
   </table>

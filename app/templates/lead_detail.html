@@ -4,6 +4,26 @@
   Lead: {{ (lead.seller_first_name or '') ~ ' ' ~ (lead.seller_last_name or '') | trim }}
 </h2>
 
+{# templates/lead_detail.html snippet #}
+<h5 class="mt-4">Offers</h5>
+{% if lead.offers %}
+  <ul class="list-group">
+    {% for o in lead.offers %}
+      <li class="list-group-item bg-dark text-light d-flex justify-content-between">
+        <span>
+          {{ "Initial" if o.initial_offer else "Offer" }} •
+          {{ o.created_at.strftime("%Y-%m-%d") }} •
+          {{ o.offer_status.value if o.offer_status else "—" }}
+        </span>
+        <span>{{ o.my_cash_offer|currency }}</span>
+      </li>
+    {% endfor %}
+  </ul>
+{% else %}
+  <div class="text-muted">No offers yet.</div>
+{% endif %}
+
+
 <div class="mb-3">
   <span class="badge bg-secondary">{{ lead.lead_status or 'New Lead' }}</span>
   <small class="text-muted ms-2">ID #{{ lead.id }}</small>

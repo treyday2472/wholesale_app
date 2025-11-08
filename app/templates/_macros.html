@@ -1,0 +1,47 @@
+{# app/templates/_macros.html #}
+{% macro kv(label, value, cls="") -%}
+  <div class="kv {{ cls }}"><strong>{{ label }}:</strong> {{ value if value is not none and value != '' else '—' }}</div>
+{%- endmacro %}
+
+{% macro link(label, url, blank=True) -%}
+  {%- if url -%}
+    <a href="{{ url }}" {{ 'target=_blank rel=noopener' if blank else '' }}>{{ label }}</a>
+  {%- else -%}
+    {{ label }}
+  {%- endif -%}
+{%- endmacro %}
+
+{% macro json_dump(obj) -%}
+  <pre style="white-space:pre-wrap">{{ obj|tojson(indent=2) }}</pre>
+{%- endmacro %}
+
+{% macro img(src, alt="", w=600, h="auto") -%}
+  {%- if src -%}
+    <img src="{{ src }}" alt="{{ alt }}" style="max-width:100%;width:{{ w }}px;height:{{ h }}">
+  {%- endif -%}
+{%- endmacro %}
+
+{% macro address_zillow(address, url=None) -%}
+  {%- if url -%}
+    <a href="{{ url }}" target="_blank" rel="noopener">Zillow: {{ address }}</a>
+  {%- else -%}
+    {{ address }}
+  {%- endif -%}
+{%- endmacro %}
+
+{# NEW: lead status badge #}
+{% macro status_badge(status) -%}
+  {%- set s = (status or '')|string %}
+  {%- set key = s|lower %}
+  {%- set map = {
+        'new lead': 'secondary',
+        'contacted': 'info',
+        'appointment set': 'primary',
+        'offer made': 'warning',
+        'under contract': 'success',
+        'closed': 'dark',
+        'dead': 'danger'
+      } %}
+  {%- set cls = map.get(key, 'secondary') %}
+  <span class="badge bg-{{ cls }}">{{ s if s else '—' }}</span>
+{%- endmacro %}

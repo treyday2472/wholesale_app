@@ -32,7 +32,13 @@ class Property(db.Model):
     created_at     = db.Column(db.DateTime, default=datetime.utcnow)
 
 class Lead(db.Model):
+
+
+
     id = db.Column(db.Integer, primary_key=True)
+    property_id = db.Column(db.Integer, db.ForeignKey("property.id"), nullable=True)
+    property = db.relationship("Property", backref=db.backref("leads", lazy=True))
+
     sf_lead_id = db.Column(db.String(32), nullable=True)
 
     seller_first_name = db.Column(db.String(60))
@@ -45,7 +51,7 @@ class Lead(db.Model):
     occupancy_status  = db.Column(db.String(30))   # vacant / owner_occupied / rented
     closing_date      = db.Column(db.String(20))   # keep string for now (e.g., '2025-08-31')
 
-    condition         = db.Column(db.String(10))   # 1–10 (REQUIRED in form)
+    condition         = db.Column(db.String(10), default="7")
     reason            = db.Column(db.Text)
     timeline          = db.Column(db.String(50))
     asking_price      = db.Column(db.String(50))
@@ -66,6 +72,11 @@ class Lead(db.Model):
 
     image_files       = db.Column(db.Text)
     lead_status       = db.Column(db.String(50), default="New Lead")
+
+    created_at        = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at        = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 
 class Buyer(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -138,7 +149,10 @@ class Offer(db.Model):
 
     # relationships
     lead_id = db.Column(db.Integer, db.ForeignKey("lead.id"), nullable=True)
+    lead    = db.relationship("Lead", backref=db.backref("offers", lazy=True))
+
     property_id = db.Column(db.Integer, db.ForeignKey("property.id"), nullable=True)  # <-- change here
+    prop        = db.relationship("Property", backref=db.backref("offers", lazy=True))
 
     # high-level categorization
     deal_kind = db.Column(db.String(64))   # e.g., "Flip" or "Rental" (your terms)
@@ -173,6 +187,7 @@ class Offer(db.Model):
     # meta
     notes = db.Column(db.Text)
     offer_status = db.Column(db.Enum(OfferStatus))
+    initial_offer = db.Column(db.Boolean, default=False)  # 👈 mark “auto” offer
     offer_letter_url = db.Column(db.String(512))
     report_url_with_seller = db.Column(db.String(512))
     report_url_no_seller = db.Column(db.String(512))
