@@ -7,6 +7,10 @@ from typing import Any, Dict, Optional, Tuple, List
 from pathlib import Path
 from urllib.parse import quote
 from dotenv import load_dotenv
+from flask import current_app
+
+load_dotenv()
+
 
 try:
     from flask import current_app  # available when inside app context
@@ -97,9 +101,13 @@ def _try_get(url: str, headers: Dict[str, str], params: Dict[str, Any]) -> Tuple
 _ZIP_RE = re.compile(r"\b(\d{5})(?:-\d{4})?\b")
 
 
+# Prefer the trailing 5-digit ZIP in the string
 def _extract_zip(address: str) -> Optional[str]:
-    m = _ZIP_RE.search(address or "")
-    return m.group(1) if m else None
+    if not address:
+        return None
+    matches = _ZIP_RE.findall(address)
+    # _ZIP_RE has a capturing group; findall() returns just that group
+    return matches[-1] if matches else None
 
 
 def market_data_by_zip(zip_code: str,
@@ -674,17 +682,17 @@ def investor_snapshot_by_zpid(zpid: str,
     z_high = zdata.get("high") if isinstance(zdata, dict) else None
 
     rdata = rent_estimate(addr_bits, api_key=api_key, host=host) or {}
-    rent_val = valuation_income.get("rentEstimate")
-    if not rent_val and details.get("rentEstimate"):
-        valuation_income["rentEstimate"] = details["rentEstimate"]
-    
+    rent_val = (rdata.get("rent") or rdata.get("rentZestimate") or rdata.get("amount") 
+                or rdata.get("value") or details.get("rentEstimate"))
+
     valuation_income = {
         "zestimate": zestimate_val,
         "zestimateRange": {"low": z_low, "high": z_high},
         "rentEstimate": rent_val,
         "grossYield": (round(((rent_val or 0) * 12 / zestimate_val * 100), 2)
-                       if (rent_val and zestimate_val and zestimate_val > 0) else None),
+                    if (rent_val and zestimate_val and zestimate_val > 0) else None),
     }
+
 
     # 4) Lot & building
     lot_building = {
@@ -757,30 +765,100 @@ def investor_snapshot_by_address(address: str,
 # app/services/zillow_client.py
 from flask import current_app
 
-def zillow_basics(full_address: str) -> dict:
-    """
-    Uses your existing evaluate_address_with_marketdata() and extracts
-    only cheap 'signals' + basic structure when available.
-    """
-    try:
-        data = evaluate_address_with_marketdata(
-            full_address,
-            current_app.config.get("RAPIDAPI_KEY", ""),
-            current_app.config.get("ZILLOW_HOST", "zillow-com1.p.rapidapi.com"),
-        )
-    except Exception:
-        return {}
+# zillow_client.py
 
-    home = (data or {}).get("home") or {}
-    return {
-        "as_of": data.get("asOf") or data.get("date"),
-        "beds": home.get("bedrooms") or home.get("beds"),
-        "baths": home.get("bathrooms") or home.get("baths"),
-        "sqft": home.get("livingArea") or home.get("sqft"),
-        "year_built": home.get("yearBuilt"),
+def zillow_basics(full_address: str, rapid_key: str | None = None, host: str | None = None) -> dict:
+    rapid_key = (
+        rapid_key
+        or (current_app.config.get("RAPIDAPI_KEY") if current_app else None)
+        or os.getenv("RAPIDAPI_KEY", "")
+    )
+    host = (
+        host
+        or (current_app.config.get("ZILLOW_HOST") if current_app else None)
+        or os.getenv("ZILLOW_HOST", "zillow-com1.p.rapidapi.com")
+    )
+
+    # 1) Resolve zpid (this returns a STRING or None)
+    try:
+        zpid = search_address_for_zpid(full_address, api_key=rapid_key, host=host)
+    except Exception:
+        zpid = None
+
+    # define basics BEFORE any .update() calls
+    basics: dict = {"zpid": zpid, "raw": {}}
+
+    # 2) Fallback: no zpid -> try market ZIP data so the UI isn't empty
+    if not zpid:
+        try:
+            ev = evaluate_address_with_marketdata(full_address, api_key=rapid_key, host=host) or {}
+        except Exception:
+            ev = {}
+
+        home = (ev.get("home") or ev.get("property") or ev.get("result") or {})
+        def _pick(*candidates):
+            for c in candidates:
+                if c is not None:
+                    return c
+            return None
+
+        zestimate = _pick(
+            home.get("zestimate"),
+            (home.get("zestimateData") or {}).get("amount"),
+            (home.get("zestimateData") or {}).get("value"),
+            (ev.get("zestimate") or {}).get("amount"),
+            ev.get("zestimate"),
+        )
+        rent_zestimate = _pick(
+            home.get("rentZestimate"),
+            home.get("rent_zestimate"),
+            (home.get("rent") or {}).get("amount"),
+            (home.get("rent") or {}).get("value"),
+            (ev.get("rent") or {}).get("amount"),
+            ev.get("rent_zestimate"),
+        )
+
+        basics.update({
+            "zestimate": zestimate,
+            "rent_zestimate": rent_zestimate,
+            "zillow_url": home.get("hdpUrl") or home.get("zillowUrl") or home.get("url"),
+            "for_sale": str(home.get("homeStatus") or "").upper() in {"FOR_SALE", "PENDING", "ACTIVE"},
+            "sale_status": home.get("homeStatus") or home.get("statusType"),
+            "list_price": home.get("price") or home.get("unformattedPrice") or home.get("listPrice"),
+            "raw": {"home": home},
+        })
+        return basics
+
+    # 3) We have a zpid → pull full details and enrich
+    d = property_details_by_zpid(zpid, api_key=rapid_key, host=host) or {}
+    home = (d.get("home") or d.get("property") or d.get("homeDetails") or d)
+
+    status = (home.get("homeStatus") or home.get("statusType") or "").upper()
+    for_sale = bool(
+        status in ("FOR_SALE", "PENDING", "ACTIVE")
+        or home.get("isForSale")
+        or home.get("isFsbo")
+        or home.get("isNewConstruction")
+    )
+
+    canonical_url = f"https://www.zillow.com/homedetails/{zpid}_zpid/"
+
+    basics.update({
         "zestimate": home.get("zestimate"),
-        "rent_zestimate": home.get("rentZestimate"),
-        "url": home.get("zillowUrl"),
+        "rent_zestimate": home.get("rentZestimate") or home.get("rent_zestimate"),
+        "zillow_url": home.get("hdpUrl") or home.get("zillowUrl") or home.get("url") or canonical_url,
+        "url":        home.get("hdpUrl") or home.get("zillowUrl") or home.get("url") or canonical_url,  # your UI uses `url`
+        "for_sale":   for_sale,
+        "sale_status": home.get("homeStatus") or home.get("statusType"),
+        "list_price": home.get("price") or home.get("unformattedPrice") or home.get("listPrice"),
+
+        # Fill previously-null fields for your Show Key
+        "beds":  home.get("bedrooms") or home.get("beds"),
+        "baths": home.get("bathrooms") or home.get("baths"),
+        "sqft":  home.get("livingArea") or home.get("living_area"),
+        "year_built": home.get("yearBuilt") or home.get("year_built"),
         "photos": home.get("photos") or [],
-        "raw": data,  # keep for troubleshooting
-    }
+        "raw": {"home": home},
+    })
+
+    return basics

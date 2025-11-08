@@ -1,6 +1,10 @@
 {% extends "base.html" %}
 {% block title %}Property {{ prop.id }}{% endblock %}
 
+
+
+
+
 {% block content %}
 {# ---------- snapshot/raw helpers ---------- #}
 {% set snap      = snapshot or {} %}
@@ -15,11 +19,20 @@
 {% set exitf     = snap.get('8_exit_flags', {}) %}
 {% set market    = snap.get('market') %}
 
+<div class="d-flex gap-2 mb-3">
+  <a class="btn btn-primary" href="{{ url_for('offers.new_offer', property_id=prop.id) }}">Offer</a>
+  {% if lead_for_prop %}
+    <a class="btn btn-outline-secondary" href="{{ url_for('main.lead_detail', lead_id=lead_for_prop.id) }}">Contact</a>
+  {% else %}
+    <a class="btn btn-outline-secondary" href="{{ url_for('main.leads_list', q=prop.address) }}">Find Contact</a>
+  {% endif %}
+</div>
+
+
 {# ---------- raw payloads from DB ---------- #}
 {% set raw_all   = raw or {} %}
 {% set raw_z     = raw_all.get('zillow', {}) %}
 {% set raw_m     = raw_all.get('melissa', {}) %}
-{% set raw_attom = raw_all.get('attom', {}) %}
 {% set locks     = raw_all.get('locks') or {} %}
 {% set saved_rules = raw_all.get('comp_rules') or {} %}
 {% set ux        = raw_all.get('user_overrides') or {} %}
@@ -63,25 +76,6 @@
             or valuation.get('Date')
 }) %}
 
-{# ATTOM extracts for convenience #}
-{% set attx = raw_all.get('attom_extract') or {} %}
-{% set ax   = attx.get('avm') or {} %}
-{% set rx   = attx.get('rental_avm') or {} %}  
-
-{# Fallback to raw rental payload if extract not present #}
-{% if not rx and (raw_attom.get('rental_avm') or {}).get('property') %}
-  {% set rprop = (raw_attom.get('rental_avm').get('property') or [])[0] %}
-  {% if rprop %}
-    {% set rnode = rprop.get('rentalAvm', {}) %}
-    {% set rx = {
-      'value': rnode.get('estimatedRentalValue'),
-      'low':   rnode.get('estimatedMinRentalValue'),
-      'high':  rnode.get('estimatedMaxRentalValue'),
-      'as_of': rnode.get('valuationDate'),
-    } %}
-  {% endif %}
-{% endif %}
-
 {# ---------- Deeds: normalize to list and pick latest ---------- #}
 {% set deeds_raw = raw_m.get('LookupDeeds') or {} %}
 {% set deeds_records = deeds_raw.get('Records') %}
@@ -117,6 +111,22 @@
 {% set lat = details.get('lat') or prop.lat %}
 {% set lng = details.get('lng') or prop.lng %}
 {% set fulladdr = meta.get('fullAddress') or prop.full_address or prop.address or ("Property " ~ prop.id) %}
+
+{% if raw_z %}
+  <details class="mt-4">
+    <summary><strong>Zillow (basics) – click to expand</strong></summary>
+    <pre style="white-space: pre-wrap">{{ raw_z | tojson(indent=2) }}</pre>
+  </details>
+
+  {% set zraw = raw_z.get('raw', {}) %}
+  {% if zraw.get('home') %}
+    <details class="mt-3">
+      <summary><strong>Zillow raw.home – click to expand</strong></summary>
+      <pre style="white-space: pre-wrap">{{ zraw.get('home') | tojson(indent=2) }}</pre>
+    </details>
+  {% endif %}
+{% endif %}
+
 
 {# ---------- first photo (prefer Zillow/raw) ---------- #}
 {% set rawd = details.get('raw', {}) %}
@@ -160,33 +170,45 @@
 {# ---------- optional est repairs from route ---------- #}
 {% set est_repairs = (est_repairs if est_repairs is defined and est_repairs else '') %}
 
-{# ---------- ARV helper ---------- #}
-{% set z_zest = valinc.get('zestimate') or raw_z.get('zestimate') %}
+{# --- Zillow convenience nodes --- #}
+{% set z_home = (raw_z.get('raw', {}).get('home') or {}) %}
+{% set z_for_sale = (raw_z.get('for_sale') or z_home.get('isForSale')) %}
+{% set z_status = (raw_z.get('sale_status') or z_home.get('homeStatus') or z_home.get('statusType')) %}
+{% set z_list = (raw_z.get('list_price') 
+                 or z_home.get('price') 
+                 or z_home.get('unformattedPrice') 
+                 or z_home.get('listPrice')) %}
+{% set z_url = (raw_z.get('zillow_url') 
+                or z_home.get('hdpUrl') 
+                or z_home.get('zillowUrl') 
+                or z_home.get('url')) %}
+
+{# Prefer snapshot zestimate if present, then raw.zillow, then raw.home node #}
+{% set z_zest = (valinc.get('zestimate') 
+                 or raw_z.get('zestimate') 
+                 or z_home.get('zestimate')) %}
+
+{# Rent estimate can be in several shapes: snapshot.rentEstimate, raw_z, or home.rentZestimate #}
+{% set z_rent = (valinc.get('rentEstimate') 
+                 or raw_z.get('rent_zestimate') 
+                 or z_home.get('rentZestimate') 
+                 or z_home.get('rent_zestimate')) %}
+
+{# ---------- ARV helper (Zillow → Melissa fallback) ---------- #}
 {% set m_estv = valuation.get('EstimatedValue') or taxnode.get('AssessedValueTotal') %}
 {% set est_arv = (z_zest if z_zest is not none else m_estv) %}
 
 {# ---------- loaded flags ---------- #}
 {% set melissa_loaded = raw_m and (m0|length > 0) %}
-{% set attom_loaded   = raw_attom is mapping and (raw_attom|length > 0) %}
 
 <div class="alert alert-info" style="white-space:nowrap">
   <strong>Raw status:</strong>
   Zillow: {{ 'yes' if raw_z else 'no' }} |
-  Melissa: {{ 'yes' if raw_m else 'no' }} |
-  ATTOM: {{ 'yes' if attom_loaded else 'no' }}
+  Melissa: {{ 'yes' if raw_m else 'no' }}
 </div>
 
 <details class="mb-3">
   <summary>Show raw keys</summary>
-
-  <div class="card mt-3">
-    <div class="card-header">ATTOM (raw_attom)</div>
-    <div class="card-body p-2">
-      <pre class="small bg-light p-2 border rounded" style="max-height:420px; overflow:auto;">
-{{ (raw_all.get('attom') or {}) | tojson(indent=2) }}
-      </pre>
-    </div>
-  </div>
 
   <div class="row g-3 mt-2">
     <div class="col-md-6">
@@ -240,12 +262,24 @@
 
   <div class="mt-3">Zillow keys: {{ (raw_z.keys()|list) if raw_z else [] }}</div>
   <div>Melissa keys: {{ (raw_m.keys()|list) if raw_m else [] }}</div>
-  <div>ATTOM keys: {{ (raw_attom.keys()|list) if attom_loaded else [] }}</div>
 </details>
 
 <div class="container my-4">
   <div class="d-flex justify-content-between align-items-center mb-3">
-    <h2 class="mb-0">{{ fulladdr }}</h2>
+    <h2 class="mb-0 d-flex align-items-center">
+      <span>{{ fulladdr }}</span>
+      {% if raw_z.get('for_sale') %}
+        <span class="badge bg-danger ms-2">For Sale</span>
+        {% if raw_z.get('list_price') %}
+          <span class="badge bg-light text-muted ms-1">{{ raw_z.get('list_price') | currency }}</span>
+        {% endif %}
+        {% if raw_z.get('zillow_url') %}
+          <a class="ms-2 small" href="{{ raw_z.get('zillow_url') }}" target="_blank" rel="noopener">View on Zillow</a>
+        {% endif %}
+      {% elif raw_z.get('sale_status') %}
+        <span class="badge bg-secondary ms-2">{{ raw_z.get('sale_status') }}</span>
+      {% endif %}
+    </h2>
     <div class="d-flex gap-2">
       <a class="btn btn-sm btn-secondary" href="{{ url_for('main.properties_list') }}">Back</a>
 
@@ -257,16 +291,6 @@
         {% else %}
           <button class="btn btn-sm btn-outline-primary" type="submit">Refresh Melissa</button>
         {% endif %}
-      </form>
-
-      {# ATTOM — SINGLE BUTTON, VISIBLE COLOR #}
-      <form method="POST" action="{{ url_for('main.enrich_attom', property_id=prop.id) }}" class="d-inline">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <button class="btn btn-sm btn-warning" type="submit">
-          {% set raw_attom_btn = (raw or {}).get('attom') or {} %}
-          {% set attom_loaded_btn = raw_attom_btn.get('avm') or raw_attom_btn.get('detail') %}
-          {% if attom_loaded_btn %}Refresh ATTOM{% else %}Get more info (ATTOM){% endif %}
-        </button>
       </form>
 
       {# Zillow #}
@@ -320,78 +344,58 @@
     </div>
   </div>
 
-  {# ---------- Edit / Overrides (NEW) ---------- #}
+  {# ---------- Edit / Overrides (NO LOCKS, NO LAT/LNG) ---------- #}
   <div class="card mb-3">
     <div class="card-header">Edit / Overrides</div>
     <form method="POST" action="{{ url_for('main.property_update', property_id=prop.id) }}" class="card-body">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
       <div class="row g-2">
         <div class="col-md-6">
           <label class="form-label">Full Address</label>
           <input class="form-control form-control-sm" name="full_address" value="{{ prop.full_address or '' }}">
-          <div class="form-check mt-1">
-            <input class="form-check-input" type="checkbox" name="lock_full_address" id="lock_full_address" {% if locks.get('full_address') %}checked{% endif %}>
-            <label class="form-check-label" for="lock_full_address">Lock</label>
-          </div>
         </div>
+
         <div class="col-md-2">
           <label class="form-label">Beds</label>
           <input class="form-control form-control-sm" name="beds" value="{{ prop.beds if prop.beds is not none else '' }}">
-          <div class="form-check mt-1">
-            <input class="form-check-input" type="checkbox" name="lock_beds" {% if locks.get('beds') %}checked{% endif %}> Lock
-          </div>
         </div>
+
         <div class="col-md-2">
           <label class="form-label">Baths</label>
           <input class="form-control form-control-sm" name="baths" value="{{ prop.baths if prop.baths is not none else '' }}">
-          <div class="form-check mt-1">
-            <input class="form-check-input" type="checkbox" name="lock_baths" {% if locks.get('baths') %}checked{% endif %}> Lock
-          </div>
         </div>
+
         <div class="col-md-2">
           <label class="form-label">Sqft</label>
           <input class="form-control form-control-sm" name="sqft" value="{{ prop.sqft if prop.sqft is not none else '' }}">
-          <div class="form-check mt-1">
-            <input class="form-check-input" type="checkbox" name="lock_sqft" {% if locks.get('sqft') %}checked{% endif %}> Lock
-          </div>
         </div>
 
         <div class="col-md-3">
           <label class="form-label">Lot Size (sf)</label>
           <input class="form-control form-control-sm" name="lot_size" value="{{ prop.lot_size if prop.lot_size is not none else '' }}">
-          <div class="form-check mt-1"><input class="form-check-input" type="checkbox" name="lock_lot_size" {% if locks.get('lot_size') %}checked{% endif %}> Lock</div>
         </div>
+
         <div class="col-md-3">
           <label class="form-label">Year Built</label>
           <input class="form-control form-control-sm" name="year_built" value="{{ prop.year_built if prop.year_built is not none else '' }}">
-          <div class="form-check mt-1"><input class="form-check-input" type="checkbox" name="lock_year_built" {% if locks.get('year_built') %}checked{% endif %}> Lock</div>
         </div>
-        <div class="col-md-3">
-          <label class="form-label">Latitude</label>
-          <input class="form-control form-control-sm" name="lat" value="{{ prop.lat if prop.lat is not none else '' }}">
-          <div class="form-check mt-1"><input class="form-check-input" type="checkbox" name="lock_lat" {% if locks.get('lat') %}checked{% endif %}> Lock</div>
-        </div>
-        <div class="col-md-3">
-          <label class="form-label">Longitude</label>
-          <input class="form-control form-control-sm" name="lng" value="{{ prop.lng if prop.lng is not none else '' }}">
-          <div class="form-check mt-1"><input class="form-check-input" type="checkbox" name="lock_lng" {% if locks.get('lng') %}checked{% endif %}> Lock</div>
-        </div>
+
+        {# REMOVED lat/lng fields per request #}
 
         <div class="col-md-6">
           <label class="form-label">School District</label>
           <input class="form-control form-control-sm" name="school_district" value="{{ prop.school_district or '' }}">
-          <div class="form-check mt-1"><input class="form-check-input" type="checkbox" name="lock_school_district" {% if locks.get('school_district') %}checked{% endif %}> Lock</div>
         </div>
 
         <div class="col-md-3">
           <label class="form-label">HOA (override)</label>
           <input class="form-control form-control-sm" name="hoa" value="{{ ux.get('hoa') or '' }}">
-          <div class="form-check mt-1"><input class="form-check-input" type="checkbox" name="lock_hoa" {% if locks.get('hoa') %}checked{% endif %}> Lock</div>
         </div>
+
         <div class="col-md-3">
           <label class="form-label">Subdivision (override)</label>
           <input class="form-control form-control-sm" name="subdivision" value="{{ ux.get('subdivision') or '' }}">
-          <div class="form-check mt-1"><input class="form-check-input" type="checkbox" name="lock_subdivision" {% if locks.get('subdivision') %}checked{% endif %}> Lock</div>
         </div>
 
         <div class="col-12">
@@ -402,76 +406,8 @@
 
       <div class="mt-3">
         <button class="btn btn-sm btn-success" type="submit">Save Changes</button>
-        <span class="text-muted small ms-2">Locked fields won’t be overwritten by Melissa/ATTOM/Zillow refresh.</span>
       </div>
     </form>
-  </div>
-
-  {# ---------- Activity log (supports multiple shapes) ---------- #}
-  {% set activity_log = (raw_all.get('log')
-                         or raw_all.get('activity_log')
-                         or raw_all.get('attom_log')
-                         or log_entries
-                         or []) %}
-  {% if activity_log is mapping %}
-    {% set activity_log = [activity_log] %}
-  {% endif %}
-  {% set activity_log = activity_log | sort(attribute='at', reverse=True) %}
-
-  <div class="card mb-3">
-    <div class="card-header d-flex justify-content-between align-items-center">
-      <span>Activity Log</span>
-      <span class="badge bg-light text-muted">{{ activity_log|length }} entries</span>
-    </div>
-    <div class="card-body p-0">
-      {% if activity_log %}
-        <table class="table table-sm mb-0 align-middle">
-          <thead>
-            <tr>
-              <th style="width: 160px;">Time (UTC)</th>
-              <th style="width: 90px;">Source</th>
-              <th style="width: 160px;">Event</th>
-              <th style="width: 90px;">Status</th>
-              <th>Note</th>
-              <th style="width: 120px;">Meta</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for e in activity_log %}
-              {% set ts = e.at or e.timestamp or e.time %}
-              {% set src = e.source or e.provider or '—' %}
-              {% set evt = e.event or e.action or '—' %}
-              {% set st  = e.status or e.code or e.http_status %}
-              <tr>
-                <td class="text-nowrap small">{{ ts or '—' }}</td>
-                <td class="small">{{ src }}</td>
-                <td class="small">{{ evt }}</td>
-                <td>
-                  {% if st in (200, 'ok', 'OK', 'success', 0) %}
-                    <span class="badge bg-success">OK</span>
-                  {% elif st %}
-                    <span class="badge bg-danger">{{ st }}</span>
-                  {% else %}
-                    <span class="badge bg-secondary">—</span>
-                  {% endif %}
-                </td>
-                <td class="small">{{ e.note or e.msg or e.message or '' }}</td>
-                <td class="text-monospace small">
-                  {% if e.meta %}
-                    <details>
-                      <summary class="text-muted">meta</summary>
-                      <pre class="mb-0">{{ e.meta | tojson(indent=2) }}</pre>
-                    </details>
-                  {% else %}—{% endif %}
-                </td>
-              </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      {% else %}
-        <div class="p-3 text-muted">No log entries yet.</div>
-      {% endif %}
-    </div>
   </div>
 
   <!-- Property Info (H) -->
@@ -564,6 +500,27 @@
         <div class="col-md-6"><strong>AssessorLastSaleDate</strong> (M): {{ sale_last_date or "—" }}</div>
         <div class="col-md-6"><strong>AssessorLastSaleAmount</strong> (M): {{ sale_last_amt | currency if sale_last_amt is not none else "—" }}</div>
       </div>
+    <hr class="my-2">
+    <div class="row g-2">
+      <div class="col-md-6">
+        <strong>Zillow Status</strong>:
+        {% if z_for_sale %}
+          <span class="badge bg-warning text-dark">For Sale</span>
+          {% if z_list %} <span class="ms-1">{{ z_list | currency }}</span>{% endif %}
+        {% elif z_status %}
+          <span class="badge bg-light text-muted">{{ z_status }}</span>
+        {% else %}
+          <span class="text-muted">—</span>
+        {% endif %}
+      </div>
+      <div class="col-md-6">
+        <strong>Zillow Link</strong>:
+        {% if z_url %}
+          <a href="{{ z_url }}" target="_blank" rel="noopener">Open on Zillow</a>
+        {% else %}
+          <span class="text-muted">—</span>
+        {% endif %}
+      </div>
     </div>
   </div>
 
@@ -572,64 +529,29 @@
     <div class="card-header">Estimates (H)</div>
     <div class="card-body">
       <div class="row g-2">
-        <div class="col-md-3"><strong>ATTOM AVM</strong>:
-          {{ ax.get('value') | currency if ax.get('value') is not none else "—" }}
-          {% if ax.get('low') and ax.get('high') %}
-            <span class="text-muted"> ({{ ax.get('low')|currency }}–{{ ax.get('high')|currency }})</span>
-          {% endif %}
-          {% if ax.get('as_of') %}
-            <span class="badge bg-light text-muted ms-1">as of {{ ax.get('as_of') }}</span>
-          {% endif %}
-        </div>
-        <div class="col-md-3"><strong>ATTOM Rent AVM</strong>:
-          {{ rx.get('value') | currency if rx.get('value') is not none else "—" }}
-          {% if rx.get('low') and rx.get('high') %}
-            <span class="text-muted"> ({{ rx.get('low')|currency }}–{{ rx.get('high')|currency }})</span>
-          {% endif %}
-          {% if rx.get('as_of') %}
-            <span class="badge bg-light text-muted ms-1">as of {{ rx.get('as_of') }}</span>
-          {% endif %}
-        </div>
         <div class="col-md-3"><strong>Zestimate</strong> (Z):
-          {{ raw_z.get('zestimate') | currency if raw_z.get('zestimate') is not none else "—" }}
+          {{ z_zest | currency if z_zest is not none else "—" }}
+        </div>
+        <div class="col-md-3"><strong>Rent Zestimate</strong> (Z):
+          {{ z_rent | currency if z_rent is not none else "—" }}
         </div>
         <div class="col-md-3"><strong>Melissa AVM</strong>:
           {{ mx.get('value') | currency if mx.get('value') is not none else "—" }}
           {% if mx.get('low') and mx.get('high') %}
             <span class="text-muted"> ({{ mx.get('low')|currency }}–{{ mx.get('high')|currency }})</span>
-        
           {% endif %}
           {% if mx.get('as_of') %}
             <span class="badge bg-light text-muted ms-1">as of {{ mx.get('as_of') }}</span>
           {% endif %}
         </div>
-      </div>
-      
-
-      <div class="row g-2 mt-2">
-        <div class="col-md-3"><span class="text-muted small">
-          {% if ax.get('as_of') %}AVM as of {{ ax.get('as_of') }}{% endif %}
-          {% if ax.get('confidence') %} · conf {{ ax.get('confidence') }}{% endif %}
-        </span></div>
-        <div class="col-md-3"><span class="text-muted small">
-          {% if rx.get('as_of') %}Rent AVM as of {{ rx.get('as_of') }}{% endif %}
-        </span></div>
-
-        <div class="col-md-3"><strong>Estimated Repairs</strong> (C):
-          {{ est_repairs if est_repairs else "—" }}
-        </div>
-
         <div class="col-md-3"><strong>Estimated ARV</strong> (C):
-          {% set est_arv = ax.get('value')
-                           or raw_z.get('zestimate')
-                           or mx.get('value')
-                           or taxnode.get('AssessedValueTotal') %}
           {{ est_arv | currency if est_arv is not none else "—" }}
         </div>
       </div>
     </div>
   </div>
-  {# ---- PLACE THE AI ARV CARD AFTER the Estimates card ---- #}
+
+  {# ---- AI ARV CARD ---- #}
   {% if arv_pack and arv_pack.arv is not none %}
     <div class="card mb-3">
       <div class="card-header d-flex justify-content-between align-items-center">
@@ -657,6 +579,11 @@
                   {% endif %}
                 {% endfor %}
               {% else %}—{% endif %}
+              {% if arv_pack and arv_pack.why %}
+                <div class="mt-2 small text-muted">
+                  <strong>Why:</strong> {{ arv_pack.why }}
+                </div>
+              {% endif %}
             </span>
           </div>
         </div>
@@ -665,13 +592,13 @@
   {% elif arv_notes %}
     <div class="alert alert-secondary small mb-3">{{ arv_notes }}</div>
   {% endif %}
+
   <div class="row g-2 mt-2">
     <div class="col-md-3"><strong>Estimated Melissa Value</strong> (M): {{ valuation.get('EstimatedValue') | currency if valuation.get('EstimatedValue') is not none else (taxnode.get('AssessedValueTotal') | currency if taxnode.get('AssessedValueTotal') is not none else "—") }}</div>
-    <div class="col-md-3"><strong>Estimated Repairs</strong> (C): {{ est_repairs if est_repairs else "—" }}</div>
     <div class="col-md-3"><strong>Estimated ARV</strong> (C): {{ est_arv | currency if est_arv is not none else "—" }}</div>
   </div>
 
-  {# ---------- Comps Rules (NEW) ---------- #}
+  {# ---------- Comps Rules ---------- #}
   <form method="POST" action="{{ url_for('main.comps_ai_select', property_id=prop.id) }}" class="d-inline">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="hidden" name="k" value="6">
@@ -713,20 +640,6 @@
     </form>
   </div>
 
-
-
-  {% set cdbg = (raw_all.get('attom_extract') or {}).get('comps_debug') %}
-  {% if cdbg %}
-    <div class="alert alert-secondary small mb-2">
-      Raw comps: {{ cdbg.raw }}, Kept: {{ cdbg.kept }}.
-      Dropped — date: {{ cdbg.why.date or 0 }}, radius: {{ cdbg.why.radius or 0 }},
-      sqft: {{ cdbg.why.sqft or 0 }}, year: {{ cdbg.why.year or 0 }},
-      subdivision: {{ cdbg.why.subd or 0 }}, price: {{ cdbg.why.price or 0 }}.
-    </div>
-  {% endif %}
-
-  
-
   {# ---------- Comps (filtered) ---------- #}
   {% set comps = comps_list or [] %}
   {% set r_months = saved_rules.get('max_months', 6) %}
@@ -734,7 +647,6 @@
   {% set r_sqft   = (saved_rules.get('sqft_tolerance', 0.15) * 100) %}
   {% set r_years  = saved_rules.get('year_tolerance', 5) %}
   {% set r_subd   = saved_rules.get('require_subdivision', False) %}
-  
 
   <div class="card mb-4">
     <div class="card-header d-flex justify-content-between align-items-center">
@@ -742,9 +654,6 @@
       <span class="badge bg-light text-muted">{{ comps|length }} matches</span>
     </div>
     <div class="card-body p-0">
-
-
-
       {% if comps %}
         <table class="table table-sm mb-0 align-middle">
           <thead>
@@ -757,16 +666,17 @@
               <th style="width:10%;">Sqft</th>
               <th style="width:8%;">year built</th>
               <th style="width:8%;">distance</th>
-            
             </tr>
           </thead>
           <tbody>
             {% for c in comps[:10] %}
-              {# robust label for address #}
-              {% set label = c.address
-                            or c._addr_line
-                            or ((c.address1 ~ ', ' ~ (c.city or '') ~ ', ' ~ (c.state or '') ~ ' ' ~ (c.postalcode or c.postalCode or ''))|trim(', ')) %}
-              
+              {% set parts = [] %}
+              {% if c.address1 %}{% set _ = parts.append(c.address1) %}{% endif %}
+              {% if c.city %}{% set _ = parts.append(c.city) %}{% endif %}
+              {% if c.state %}{% set _ = parts.append(c.state) %}{% endif %}
+              {% if c.postalcode or c.postalCode %}{% set _ = parts.append(c.postalcode or c.postalCode) %}{% endif %}
+              {% set label = c.address or c._addr_line or parts|join(', ') %}
+
               <tr>
                 <td class="small">
                   {% if c.zillow_url %}
@@ -791,8 +701,6 @@
               </tr>
             {% endfor %}
           </tbody>
-
-
         </table>
         <div class="p-2 text-muted small">
           Rules: ≤ {{ r_months }} mo, ≤ {{ r_radius }} mi, ± {{ r_sqft|round(0) }}% sqft, ± {{ r_years }} yr{% if r_subd %}, same subdivision{% endif %}.
@@ -803,7 +711,7 @@
       {% endif %}
     </div>
   </div>
-  {% set attx = (raw_all or {}).get('attom_extract') or {} %}
+
   {% if ai_comps %}
     <div class="card mb-4">
       <div class="card-header d-flex justify-content-between align-items-center">
@@ -851,7 +759,7 @@
                 {% elif sc is number %}
                   {{ '%.2f'|format(sc) }}
                 {% else %}
-                  —
+                  — 
                 {% endif %}
               </td>
             </tr>
@@ -861,9 +769,6 @@
           {% endfor %}
           </tbody>
         </table>
-        {% if attx.get('comps_selected_notes') %}
-          <div class="p-2 text-muted small">Notes: {{ attx.get('comps_selected_notes') }}</div>
-        {% endif %}
       </div>
     </div>
   {% endif %}

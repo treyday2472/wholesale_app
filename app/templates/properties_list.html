@@ -31,7 +31,7 @@
           <th>Sq Ft</th>
           <th>Year</th>
           <th>School District</th>
-          <th style="width: 120px;">Actions</th>
+          <th style="width: 260px;" class="text-end">Actions</th>
         </tr>
       </thead>
       <tbody>
@@ -47,13 +47,35 @@
             <td>{{ p.sqft or "—" }}</td>
             <td>{{ p.year_built or "—" }}</td>
             <td>{{ p.school_district or "—" }}</td>
-            <td>
+            <td class="text-end">
+              <div class="btn-group" role="group">
+                <a class="btn btn-sm btn-outline-primary"
+                   href="{{ url_for('main.property_detail', property_id=p.id) }}">
+                  View
+                </a>
+                <a class="btn btn-sm btn-primary"
+                   href="{{ url_for('offers.new_offer', property_id=p.id) }}">
+                  Offer
+                </a>
+                <!-- If you track lead ↔ property, link to a specific lead; otherwise search by address -->
+                {% if p.lead_id %}
+                  <a class="btn btn-sm btn-outline-secondary"
+                     href="{{ url_for('main.lead_detail', lead_id=p.lead_id) }}">
+                    Contact
+                  </a>
+                {% else %}
+                  <a class="btn btn-sm btn-outline-secondary"
+                     href="{{ url_for('main.leads_list', q=p.address) }}">
+                    Contact
+                  </a>
+                {% endif %}
+              </div>
+
               <form
                 action="{{ url_for('main.delete_property', property_id=p.id) }}"
                 method="post"
-                class="d-inline"
-                onsubmit="return confirm('Delete this property? This cannot be undone.');"
-              >
+                class="d-inline-block ms-2"
+                onsubmit="return confirm('Delete this property? This cannot be undone.');">
                 {% if csrf_token %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endif %}
                 <button type="submit" class="btn btn-sm btn-danger">Delete</button>
               </form>

@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}Offers{% endblock %}
+
+{% block content %}
+<div class="container my-4">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h2 class="mb-0">Offers</h2>
+    <a class="btn btn-primary" href="{{ url_for('offers.new_offer') }}">New Offer</a>
+  </div>
+
+  <form class="mb-3" method="get" action="{{ url_for('offers.offers_root') }}">
+    <div class="row g-2">
+      <div class="col-md-4">
+        <input class="form-control" type="text" name="q" value="{{ q or '' }}" placeholder="Search (ARV / My Cash Offer)">
+      </div>
+      <div class="col-md-3">
+        <select class="form-select" name="status">
+          <option value="">All Statuses</option>
+          {% for s in OfferStatus %}
+            <option value="{{ s.value }}" {% if status==s.value %}selected{% endif %}>{{ s.value }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-2">
+        <button class="btn btn-outline-secondary w-100" type="submit">Filter</button>
+      </div>
+    </div>
+  </form>
+
+  <div class="table-responsive">
+    <table class="table table-hover align-middle">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Deal Type</th>
+          <th>Status</th>
+          <th class="text-end">ARV</th>
+          <th class="text-end">My Cash Offer</th>
+          <th style="width:120px;" class="text-end">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for o in offers %}
+          <tr>
+            <td>#{{ o.id }}</td>
+            <td>{{ o.deal_type or '—' }}</td>
+            <td><span class="badge bg-secondary">{{ o.offer_status.value if o.offer_status else '—' }}</span></td>
+            <td class="text-end">{{ o.arv|currency }}</td>
+            <td class="text-end">{{ o.my_cash_offer|currency }}</td>
+            <td class="text-end">
+              <div class="btn-group">
+                <a class="btn btn-sm btn-outline-primary" href="{{ url_for('offers.edit_offer', offer_id=o.id) }}">Open</a>
+                {% if o.property_id %}
+                  <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('main.property_detail', property_id=o.property_id) }}">Property</a>
+                {% endif %}
+                {% if o.lead_id %}
+                  <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('main.lead_detail', lead_id=o.lead_id) }}">Contact</a>
+                {% endif %}
+              </div>
+            </td>
+          </tr>
+        {% else %}
+          <tr><td colspan="6" class="text-center text-muted py-4">No offers yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

@@ -58,6 +58,23 @@ def _int_idx(x) -> Optional[int]:
     try: return int(n) if n is not None else None
     except Exception: return None
 
+
+def _avm_anchor(avm: dict) -> tuple[Optional[float], list[str]]:
+    """Return (anchor_value, source_labels_used)."""
+    if not avm: return (None, [])
+    vals = []
+    used = []
+    def _add(v, label):
+        v = _num(v)
+        if v is not None:
+            vals.append(v); used.append(label)
+    _add(avm.get("attom"),    "ATTOM")
+    _add(avm.get("melissa"),  "Melissa")
+    _add(avm.get("zestimate"),"Zestimate")
+    if vals:
+        return (float(median(vals)), used)
+    return (None, [])
+
 # -----------------------------
 # Heuristic comp scoring
 # -----------------------------
@@ -178,9 +195,10 @@ def _local_arv(subject: Dict, comps: List[Dict], k: int = 6) -> Tuple[Dict, str]
         chosen.append(i)
 
     if not rows:
-        return ({"arv": None, "low": None, "high": None, "used": []},
-                "No priced comps → ARV unavailable.")
+        pack = {"arv": None, "low": None, "high": None, "used": [], "why": "No priced comps."}
+        return pack, "No priced comps → ARV unavailable."
 
+    # weighted median via expansion
     expanded = []
     for i, ppsf, w in rows:
         reps = max(1, min(50, int(round(w * 10))))
@@ -194,22 +212,94 @@ def _local_arv(subject: Dict, comps: List[Dict], k: int = 6) -> Tuple[Dict, str]
 
     s_sqft = _to_float(subject.get("sqft"))
     if not s_sqft:
-        return ({"arv": None, "low": None, "high": None, "used": chosen[:k]},
-                "Subject missing sqft → ARV per-sf only.")
+        pack = {"arv": None, "low": None, "high": None, "used": chosen[:k],
+                "why": "Subject missing sqft; computed $/sf only."}
+        return pack, "Subject missing sqft → ARV per-sf only."
 
     arv  = mid * s_sqft
     low  = q1  * s_sqft
     high = q3  * s_sqft
-    pack = {"arv": round(arv, 0), "low": round(low, 0), "high": round(high, 0), "used": chosen[:k]}
+
+    # small human-readable reason for local method
+    used = chosen[:k]
+    # summarize typical recency/distance of used comps
+    months = []
+    dists  = []
+    for idx in used:
+        c = ranked[idx]
+        if c.get("saleDate"):
+            m = (_days_ago(c.get("saleDate")) or 0) / 30.0
+            months.append(m)
+        d = _to_float(c.get("distance"))
+        if d is not None: dists.append(d)
+    def _med(xs): 
+        xs = [x for x in xs if x is not None]
+        return float(median(xs)) if xs else None
+    m_med = _med(months)
+    d_med = _med(dists)
+
+    why = (
+        f"Anchored at ~${mid:,.0f}/sf from {len(used)} close/recents"
+        + (f" (med {d_med:.2f}mi" if d_med is not None else " (")
+        + (f", {m_med:.1f}mo)" if m_med is not None else ")")
+        + f". Subject {int(s_sqft):,}sf → ${arv:,.0f}. Range from IQR of $/sf."
+    )
+
+    pack = {
+        "arv": round(arv, 0),
+        "low": round(low, 0),
+        "high": round(high, 0),
+        "used": used,
+        "why": why[:400],
+    }
     return pack, "Local ARV from weighted median $/sf."
 
-def suggest_arv(subject: Dict, comps: List[Dict], k: int = 6) -> Tuple[Dict, str]:
+
+def suggest_arv(subject: Dict, comps: List[Dict], k: int = 6, avm: Optional[Dict] = None) -> Tuple[Dict, str]:
+    """
+    Computes a local ARV from comps, blends softly toward any AVM anchor,
+    and (optionally) lets GPT-4o refine + explain.
+    """
     local_pack, local_note = _local_arv(subject, comps, k=k)
 
+    # --- soft blend toward AVM anchor (robust & fast) ---
+    anchor, sources = _avm_anchor(avm or {})
+    blended_pack = dict(local_pack)
+    if anchor is not None and blended_pack.get("arv") is not None:
+        # simple reliability from #used comps (0..1)
+        r = min(1.0, (len(blended_pack.get("used") or [])) / max(1, k))
+        # more comps ⇒ trust comps more (80–92% comps / 20–8% AVM)
+        w_local = 0.80 + 0.12 * r
+        w_avm   = 1.0 - w_local
+
+        def _blend(a, b): 
+            return a if b is None else (w_local * a + w_avm * b)
+
+        arv  = _blend(_num(blended_pack["arv"]),  anchor)
+        low  = _blend(_num(blended_pack["low"]),  anchor * 0.97)  # nudge range toward anchor
+        high = _blend(_num(blended_pack["high"]), anchor * 1.03)
+
+        blended_pack.update({
+            "arv":  round(arv,  0),
+            "low":  round(low,  0)  if low  is not None else blended_pack.get("low"),
+            "high": round(high, 0)  if high is not None else blended_pack.get("high"),
+            "avm_sources": sources,
+            "avm_anchor":  round(anchor, 0),
+        })
+
+        # append to local “why”
+        base_why = blended_pack.get("why") or ""
+        if sources:
+            blend_note = f" Soft-blended {int(w_avm*100)}% toward AVM anchor ${anchor:,.0f} ({', '.join(sources)})."
+            blended_pack["why"] = (base_why + blend_note)[:400]
+
+    # --- If no key, stop here (fast path) ---
     cli = _client()
     if not cli:
-        return local_pack, f"{local_note} (No OpenAI key.)"
+        blended_pack.setdefault("why", "Local weighted-median $/sf; softly blended toward available AVMs.")
+        return blended_pack, f"{local_note} (No OpenAI key.)"
 
+    # --- Prepare compact comps and AVMs for GPT-4o refinement ---
     rows = []
     for i, c in enumerate(comps[:20]):
         rows.append({
@@ -225,17 +315,25 @@ def suggest_arv(subject: Dict, comps: List[Dict], k: int = 6) -> Tuple[Dict, str
         })
 
     system = (
-        "You are a residential appraisal assistant. Estimate After Repair Value (ARV) from CLOSED SALE comps.\n"
-        "Prefer recent (≤6 mo), close (≤0.5mi), ±15% size, similar year, and real closed prices.\n"
-        "Respond with JSON ONLY like "
-        '{"arv":312000,"low":295000,"high":330000,"used":[0,3,5],"why":"one sentence"}.\n'
-        "Use plain numbers for arv/low/high (no $, commas, or quotes). "
-        "Always return values; if few priced comps, infer conservatively from nearest valid comps."
+        "You are a residential appraisal assistant. Estimate ARV from CLOSED SALE comps, "
+        "prefer recent (≤6 mo), close (≤0.5mi), ±15% size, similar year/type, and real closed prices. "
+        "You are given a local comp-based baseline and optional AVMs (ATTOM/Melissa/Zestimate). "
+        "Treat AVMs as a soft prior: if comps are thin or noisy, nudge toward the AVM anchor; "
+        "otherwise, favor comps. Return ONLY minified JSON: "
+        '{"arv":312000,"low":295000,"high":330000,"used":[0,3,5],'
+        '"why":"≤280 chars explaining ppsf anchor, recency/distance/size, and how AVMs influenced it."} '
+        "Use plain numbers for arv/low/high (no $ or commas). No extra text."
     )
-
     user = {
         "subject": {k: subject.get(k) for k in ("address","beds","baths","sqft","yearBuilt")},
-        "local_baseline": local_pack,
+        "local_baseline": blended_pack,       # already blended toward AVMs
+        "avms": {
+            "attom":   (avm or {}).get("attom"),
+            "melissa": (avm or {}).get("melissa"),
+            "zestimate":(avm or {}).get("zestimate"),
+            "anchor": blended_pack.get("avm_anchor"),
+            "sources": blended_pack.get("avm_sources"),
+        },
         "candidates_top20": rows,
         "k": k
     }
@@ -265,17 +363,19 @@ def suggest_arv(subject: Dict, comps: List[Dict], k: int = 6) -> Tuple[Dict, str
                 if j is not None and 0 <= j < len(comps):
                     used.append(j)
             used = used[:k]
-            why = data.get("why")
+            why = (data.get("why") or blended_pack.get("why") or "").strip()
 
             if arv is not None:
-                pack = {
+                out = {
                     "arv":  round(arv,  0),
-                    "low":  round(low,  0) if low  is not None else local_pack.get("low"),
-                    "high": round(high, 0) if high is not None else local_pack.get("high"),
-                    "used": used or local_pack.get("used", []),
+                    "low":  round(low,  0) if low  is not None else blended_pack.get("low"),
+                    "high": round(high, 0) if high is not None else blended_pack.get("high"),
+                    "used": used or blended_pack.get("used", []),
+                    "why":  why[:400],
+                    "avm_sources": blended_pack.get("avm_sources"),
+                    "avm_anchor":  blended_pack.get("avm_anchor"),
                 }
-                note = f"OpenAI refined from local baseline. {why}" if why else "OpenAI refined from local baseline."
-                return pack, note
+                return out, "OpenAI refined from local+AVM baseline."
 
             raise ValueError("Model did not return numeric ARV.")
         except Exception as e:
@@ -283,4 +383,5 @@ def suggest_arv(subject: Dict, comps: List[Dict], k: int = 6) -> Tuple[Dict, str
             logging.warning("OpenAI ARV attempt %d failed: %s; raw=%r", attempt+1, e, raw[:400])
             time.sleep(0.8)
 
-    return local_pack, f"{local_note} (OpenAI call failed → heuristic ARV. {type(last_err).__name__}: {last_err})"
+    blended_pack.setdefault("why", "Local weighted-median $/sf; softly blended toward available AVMs.")
+    return blended_pack, f"{local_note} (OpenAI call failed → heuristic ARV. {type(last_err).__name__}: {last_err})"

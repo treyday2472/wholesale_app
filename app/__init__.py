@@ -4,10 +4,6 @@ from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from flask_wtf.csrf import CSRFProtect
 from flask_migrate import Migrate
-from dotenv import load_dotenv, find_dotenv
-
-# Load .env from project root no matter the CWD
-load_dotenv(find_dotenv(), override=True)
 
 db = SQLAlchemy()
 csrf = CSRFProtect()
@@ -41,11 +37,9 @@ def _as_bool(value, default=False):
 
 def create_app():
     app = Flask(__name__)
-
-    # Base config object (e.g., SECRET_KEY, SQLALCHEMY_DATABASE_URI, etc.)
     app.config.from_object("config.Config")
 
-    # Overlay selected environment variables into app.config
+    # Overlay selected env vars (already loaded by run.py)
     overlays = {
         "API_KEY": os.getenv("API_KEY", app.config.get("API_KEY", "")),
         "ATTOM_API_KEY": os.getenv("ATTOM_API_KEY", app.config.get("ATTOM_API_KEY", "")),
@@ -63,23 +57,31 @@ def create_app():
         os.getenv("SF_ENABLED", app.config.get("SF_ENABLED", False))
     )
 
-    # Quick visibility in logs (won’t print sensitive values)
-    app.logger.info("Config loaded. ATTOM key present? %s", bool(app.config.get("ATTOM_API_KEY")))
-    app.logger.info(
-        "Melissa key present? %s",
-        bool(app.config.get("MELISSA_API_KEY") or app.config.get("MELISSA_KEY")),
-    )
+    app.logger.info("Config loaded. ATTOM? %s", bool(app.config.get("ATTOM_API_KEY")))
+    app.logger.info("Melissa? %s", bool(app.config.get("MELISSA_API_KEY") or app.config.get("MELISSA_KEY")))
 
-    # Init extensions
+    # Extensions
     db.init_app(app)
     csrf.init_app(app)
     migrate.init_app(app, db)
 
-    # Jinja filters
+    # Core Jinja filters
     app.jinja_env.filters["currency"] = _fmt_currency
     app.jinja_env.filters["percent"] = _fmt_percent
 
-    # Make a few config values available globally in templates
+    # Optional: zillow_url helper (guarded)
+    try:
+        from .utils.urls import zillow_url  # optional
+        if callable(zillow_url):
+            app.jinja_env.filters["zillow_url"] = zillow_url
+            # also expose as a callable global for convenience
+            @app.context_processor
+            def _inject_zillow_url():
+                return {"zillow_url": zillow_url}
+    except Exception:
+        pass
+
+    # Global template vars
     @app.context_processor
     def inject_globals():
         return {
@@ -88,16 +90,24 @@ def create_app():
             "SF_INSTANCE_URL": app.config.get("SF_INSTANCE_URL", ""),
         }
 
-    # Optional: register custom filters (if present)
+    # Optional: register any extra filters if you have a module
     try:
         from .filters import register_filters  # noqa: WPS433
         register_filters(app)
     except Exception:
         pass
 
-    # Blueprints — import AFTER extensions initialized to avoid circular imports
+    # Blueprints (import after extensions)
     from .routes import main as main_bp
     app.register_blueprint(main_bp)
+
+    # Offers blueprint (if present)
+    try:
+        from .offers.routes import offers_bp  # defines url_prefix="/offers"
+        app.register_blueprint(offers_bp)
+        app.logger.info("Registered offers blueprint at /offers")
+    except Exception:
+        pass
 
     # Voice (optional)
     try:
@@ -106,7 +116,7 @@ def create_app():
     except Exception:
         pass
 
-    # API blueprint (optional) — support either app/api/... or project-level api/...
+    # API blueprint (either app/api or project-level api)
     api_bp = None
     try:
         from .api.routes import api as _api_bp  # app/api/routes.py
@@ -120,13 +130,12 @@ def create_app():
 
     if api_bp:
         app.register_blueprint(api_bp, url_prefix="/api")
-        # JSON endpoints typically don't use CSRF tokens
         try:
-            csrf.exempt(api_bp)
+            csrf.exempt(api_bp)  # JSON endpoints usually don't need CSRF
         except Exception:
             pass
 
-    # Dev convenience: ensure tables exist
+    # Dev convenience
     with app.app_context():
         db.create_all()
 

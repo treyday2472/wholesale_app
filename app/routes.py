@@ -26,6 +26,7 @@ from .forms import (
     BuyerStep1Form, BuyerStep2Form, PropertyForm
 )
 
+#from services.zillow_fetch import search_recently_sold
 # Zillow (lightweight “basics” on create + refresh endpoint for details)
 from .services.zillow_client import (
     zillow_basics,
@@ -43,7 +44,6 @@ from .services.melissa_client import (
 from .services.salesforce import upsert_lead, SalesforceAuthError, SalesforceApiError
 from .services.investor_snapshot import build_snapshot_for_property
 from urllib.parse import quote
-
 
 
 def _log(raw: dict, *, source: str, event: str, status, note: str = None, meta: dict = None):
@@ -422,7 +422,7 @@ def properties_list():
             (Property.school_district.ilike(like))
         )
     props = query.order_by(Property.id.desc()).all()
-    return render_template('properties_list.html', props=props, q=q)
+    return render_template('properties_list.html', props=props, q=q,)
 
 @main.route('/properties/new', methods=['GET','POST'])
 def property_new():
@@ -470,16 +470,16 @@ def property_new():
 def property_detail(property_id: int):
     prop = Property.query.get_or_404(property_id)
 
-    # Build unified snapshot (existing helper)
+    # unified snapshot (kept)
     snapshot = build_snapshot_for_property(prop) or {}
 
-    # Parse raw_json
+    # parse raw_json safely
     try:
         raw = json.loads(prop.raw_json) if prop.raw_json else {}
     except Exception:
         raw = {}
 
-    # Estimated repairs (unchanged)
+    # ---- repairs from latest Lead with same address (unchanged) ----
     lead_for_prop = (Lead.query.filter(Lead.address == prop.address)
                      .order_by(Lead.id.desc()).first())
     est_repairs = None
@@ -493,13 +493,25 @@ def property_detail(property_id: int):
         if isinstance(intake, dict):
             est_repairs = intake.get("repairs_cost_est")
 
-    # comps from ATTOM extract
-    attx = (raw.get("attom_extract") or {})
-    comps_list = attx.get("comps") or []
-    ai_comps   = attx.get("comps_selected") or []
+    # ---- Zillow block pulled from raw_json ----
+    raw_z = (raw.get("zillow") or {})
 
-    
+    # ---- comps come only from any precomputed extract in raw (keep names if you already store them) ----
+    comps_list = (raw.get("comps") or [])
+    ai_comps   = (raw.get("comps_selected") or [])
 
+    # Helper: zillow url by address
+    def _zillow_url_from_address(a1, city, st, zipc):
+        if not a1:
+            return None
+        # relative is fine; your template opens in new tab
+        parts = [a1.replace(' ', '-')]
+        if city: parts.append(city.replace(' ', '-'))
+        if st:   parts.append(st)
+        if zipc: parts.append(f"{zipc}")
+        return "/homedetails/" + "-".join(parts) + "/"
+
+    # address parts for comps enrichment
     def _addr_parts(c):
         loc = (c.get("location") or {}).get("address", {}) if isinstance(c, dict) else {}
         a1   = c.get("address1") or c.get("address") or loc.get("line")
@@ -516,7 +528,7 @@ def property_detail(property_id: int):
         s = " ".join(parts)
         return (f"{s} {zipc}".strip() if zipc else s)
 
-    # add label + Zillow URL to BOTH lists
+    # add label + Zillow URL to BOTH comp lists
     for group in (comps_list, ai_comps):
         for c in group:
             a1, city, st, zipc = _addr_parts(c)
@@ -526,36 +538,40 @@ def property_detail(property_id: int):
     comp_source = ai_comps if ai_comps else comps_list
 
     subject = {
-    "address": prop.full_address or prop.address,
-    "beds": prop.beds,
-    "baths": prop.baths,
-    "sqft": prop.sqft,
-    "yearBuilt": prop.year_built,
-    "lat": prop.lat,
-    "lng": prop.lng,
-}
+        "address":   prop.full_address or prop.address,
+        "beds":      prop.beds,
+        "baths":     prop.baths,
+        "sqft":      prop.sqft,
+        "yearBuilt": prop.year_built,
+        "lat":       prop.lat,
+        "lng":       prop.lng,
+    }
 
-    arv_pack, arv_notes = suggest_arv(subject, comp_source, k=6)
+    # simple AVM bundle (ATTOM removed)
+    def _num(x):
+        try: return float(x)
+        except: return None
 
-    
+    avm_bundle = {
+        "zestimate": _num(raw_z.get("zestimate")),
+        "melissa":   None,   # leave hook if you still load Melissa elsewhere
+        "attom":     None,   # removed
+    }
 
-    # pass ai_comps to the template
+    arv_pack, arv_notes = suggest_arv(subject, comp_source, k=6, avm=avm_bundle)
+
     return render_template(
         "property_detail.html",
         prop=prop,
         snapshot=snapshot,
         est_repairs=est_repairs,
         comps_list=comps_list,
-        ai_comps=ai_comps,               # <-- keep this
+        ai_comps=ai_comps,
         raw=raw,
-        arv_pack=arv_pack,          # <-- add
-        arv_notes=arv_notes,        # <-- add
+        arv_pack=arv_pack,
+        arv_notes=arv_notes,
         GOOGLE_MAPS_API_KEY=current_app.config.get("GOOGLE_MAPS_API_KEY", "")
     )
-
-
-
-
 
 @main.route('/properties/<int:property_id>/delete', methods=['POST'])
 def delete_property(property_id):
@@ -565,11 +581,15 @@ def delete_property(property_id):
     flash("Property deleted.", "info")
     return redirect(url_for('main.properties_list'))
 
-@main.route('/properties/<int:property_id>/refresh', methods=['GET','POST'])
+@main.route('/properties/<int:property_id>/refresh', methods=['GET','POST'], endpoint='property_refresh')
 def property_refresh(property_id):
+
     """
+
     Refresh Zillow details and also stash Zestimate / Rent Zestimate
+
     under raw_json["zillow"] so the template can always show them.
+
     """
     prop = Property.query.get_or_404(property_id)
     rapid_key = current_app.config.get('RAPIDAPI_KEY', '')
@@ -592,45 +612,66 @@ def property_refresh(property_id):
             facts = normalize_details(raw_details)
 
             prop.full_address    = facts.get("fullAddress") or prop.full_address
-            prop.beds            = facts.get("bedrooms") or prop.beds
-            prop.baths           = facts.get("bathrooms") or prop.baths
-            prop.sqft            = facts.get("livingArea") or prop.sqft
-            prop.lot_size        = facts.get("lotSize") or prop.lot_size
-            prop.year_built      = facts.get("yearBuilt") or prop.year_built
+            prop.beds            = facts.get("bedrooms")    or prop.beds
+            prop.baths           = facts.get("bathrooms")   or prop.baths
+            prop.sqft            = facts.get("livingArea")  or prop.sqft
+            prop.lot_size        = facts.get("lotSize")     or prop.lot_size
+            prop.year_built      = facts.get("yearBuilt")   or prop.year_built
             prop.school_district = facts.get("schoolDistrict") or prop.school_district
             if not prop.lat and facts.get("lat"): prop.lat = facts["lat"]
             if not prop.lng and facts.get("lng"): prop.lng = facts["lng"]
 
-            # 3) Try to fetch zestimate & rent quickly; stash into raw_json['zillow']
-            # (Your zillow_basics already hits a lightweight endpoint)
+            # 3) Pull zestimate/rent zestimate as “basics”
+            basics = zillow_basics(prop.full_address or prop.address, rapid_key, details_host)
+
+            home = (raw_details or {}).get("home") or {}
+            sale_status = (home.get("homeStatus")
+                           or home.get("homeStatusLabel")
+                           or home.get("statusType") or "")
+            sale_status_u = str(sale_status).upper()
+            for_sale = bool(home.get("isForSale")) or sale_status_u in {
+                "FOR_SALE", "PENDING", "COMING_SOON", "NEW"
+            }
+            list_price = (home.get("price")
+                          or home.get("unformattedPrice")
+                          or home.get("listPrice"))
+
+            # update raw (always set/update, regardless of JSON load success)
             try:
-                basics = zillow_basics(prop.full_address or prop.address)
-                if basics:
-                    raw = {}
-                    try:
-                        raw = json.loads(prop.raw_json) if prop.raw_json else {}
-                    except Exception:
-                        raw = {}
-                    raw.setdefault("zillow", {})
-                    # Keep anything present; prefer explicit zestimate keys from basics if available
-                    for k in ("zestimate", "rent_zestimate", "bedrooms", "bathrooms", "sqft", "year_built"):
-                        if basics.get(k) is not None:
-                            raw["zillow"][k] = basics.get(k)
-                    prop.raw_json = json.dumps(raw)
+                raw = json.loads(prop.raw_json) if prop.raw_json else {}
             except Exception:
-                current_app.logger.info("zillow_basics failed; continuing")
+                raw = {}
+
+            raw.setdefault("zillow", {})
+            if basics:
+                # merge the basics dict (includes .raw.home and fields)
+                raw["zillow"].update(basics)
+
+            raw["zillow"].update({
+                "for_sale": bool(for_sale),
+                "sale_status": (sale_status or None),
+                "list_price": list_price,
+            })
+
+            prop.raw_json = json.dumps(raw)
+            
+            
+
+
+            # update snapshot details → hero photo logic uses this
+            snapshot = prop.snapshot or {}
+            snapshot.setdefault("details", {})
+            snapshot["details"]["raw"] = (raw_details or {}).get("home", {})
+            prop.snapshot = snapshot
 
         db.session.commit()
-        flash("Property re-evaluated.", "success")
-
-    except ZillowError as ze:
-        current_app.logger.exception("Zillow error during property refresh")
-        flash(f"Re-evaluation failed: {ze}", "warning")
-    except Exception:
-        current_app.logger.exception("Property re-eval failed")
-        flash("Re-evaluation failed. Check API keys/paths and try again.", "warning")
+        flash("Zillow data refreshed.", "success")
+    except Exception as e:
+        current_app.logger.exception("Zillow refresh failed")
+        flash(f"Zillow refresh failed: {e}", "danger")
 
     return redirect(url_for('main.property_detail', property_id=prop.id))
+
 
 # ---------- SALESFORCE ----------
 @main.route('/leads/<int:lead_id>/export_sf', methods=['POST'])
@@ -728,7 +769,8 @@ def enrich_property_melissa(property_id):
         raw = json.loads(prop.raw_json) if prop.raw_json else {}
     except Exception:
         raw = {}
-
+        prop.raw_json["zillow"]
+        
     raw.setdefault("melissa", {})
     raw["melissa"]["LookupProperty"] = prop_payload
     if deeds_payload is not None:

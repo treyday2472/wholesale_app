@@ -1,5 +1,7 @@
 from . import db
 from datetime import datetime
+from enum import Enum
+
 
 class Property(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -112,3 +114,118 @@ try:
     Property.to_dict = _property_to_dict
 except Exception:
     pass
+
+class DealType(str, Enum):
+    CASH = "Cash"
+    OWNER_FINANCE = "Owner Finance"
+    LEASE = "Lease"
+    LEASE_OPTION = "Lease Option"
+    SUBJECT_TO = "Subject To"
+    NEW_CONSTRUCTION = "New Construction"
+
+class OfferStatus(str, Enum):
+    MADE = "Offer Made"
+    REJECTED = "Rejected"
+    ACCEPTED = "Accepted"
+    SOLD = "Sold"
+    SENT_EMAIL = "Offer Sent in Email"
+    THINKING = "Thinking about it"
+    NO_RESPONSE = "No response"
+
+class Offer(db.Model):
+    __tablename__ = "offers"
+    id = db.Column(db.Integer, primary_key=True)
+
+    # relationships
+    lead_id = db.Column(db.Integer, db.ForeignKey("lead.id"), nullable=True)
+    property_id = db.Column(db.Integer, db.ForeignKey("property.id"), nullable=True)  # <-- change here
+
+    # high-level categorization
+    deal_kind = db.Column(db.String(64))   # e.g., "Flip" or "Rental" (your terms)
+    deal_type = db.Column(db.Enum(DealType), default=DealType.CASH, nullable=False)
+
+    # pulled/derived numbers
+    arv = db.Column(db.Float)                    # from Property details page
+    market_rent_est = db.Column(db.Float)
+
+    # mortgage / holding costs
+    has_mortgage = db.Column(db.Boolean, default=False)
+    mortgage_balance = db.Column(db.Float)
+    mortgage_payment = db.Column(db.Float)
+    interest_rate = db.Column(db.Float)          # % annual (e.g., 6.5 means 6.5%)
+    monthly_taxes = db.Column(db.Float)
+    monthly_insurance = db.Column(db.Float)
+
+    # condition-based inputs
+    condition_1_10 = db.Column(db.Integer)       # seller-stated condition, 1–10
+    reinstatement_amount = db.Column(db.Float)
+
+    # repairs (store overrides, we’ll still compute live in the UI)
+    repairs_flip = db.Column(db.Float)
+    repairs_rental = db.Column(db.Float)
+
+    # money fields
+    investor_cash_price = db.Column(db.Float)    # “Investor cash price”
+    end_buyer_price = db.Column(db.Float)        # “End buyer sale price”
+    my_cash_offer = db.Column(db.Float)          # “My cash offer I'm offering”
+    cash_for_equity = db.Column(db.Float)
+
+    # meta
+    notes = db.Column(db.Text)
+    offer_status = db.Column(db.Enum(OfferStatus))
+    offer_letter_url = db.Column(db.String(512))
+    report_url_with_seller = db.Column(db.String(512))
+    report_url_no_seller = db.Column(db.String(512))
+    email_sent_at = db.Column(db.DateTime)
+
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    @property
+    def piti(self):
+        """Monthly PITI if given: mortgage_payment + taxes + insurance."""
+        base = (self.mortgage_payment or 0.0)
+        return base + (self.monthly_taxes or 0.0) + (self.monthly_insurance or 0.0)
+    
+# app/models.py (add/adjust)
+import enum
+from . import db
+
+class LeadStatus(enum.Enum):
+    NEW_LEAD = "New Lead"
+    # Pipeline (from your Podio list)
+    CONTACTED_FOLLOWUP   = "1. Contacted: After Call Follow up"
+    CONTACTED_NOT_READY  = "1b: Contacted: Not ready To Sell"
+    INSP_SCHEDULED       = "2: Inspection: Scheduled"
+    INSP_NO_SHOW         = "2b. Inspection: No Show"
+    INSP_COMPLETED       = "2c. Inspection: Completed"
+    OFFER_VERBAL         = "3a1: Offer: Made Verbally"
+    OFFER_SENT_EMAIL     = "3a2: Offer: Sent in Email"
+    OFFER_THINKING       = "3b: Offer: Thinking about it"
+    OFFER_NO_RESPONSE    = "3b2: Offer: No response"
+    OFFER_REJECTED       = "3c1: Offer: Rejected"
+    OFFER_ACCEPTED       = "3d: Offer: Accepted"
+    CONTRACT_SENT        = "4: Contract: Sent"
+    CONTRACT_EXPIRED     = "4b: Contract: Expired"
+    TITLE_UNDER_CONTRACT = "5: Title: Under Contract"
+    TITLE_NOT_CLEARED    = "5b: Title NOT Cleared"
+    TITLE_CLEARED        = "5c: Title Cleared"
+    MARKETING            = "6: Marketing"
+    SHOWING              = "7: Showing"
+    ASSIGNMENT_SENT      = "8: Assignment: Sent"
+    ASSIGNMENT_SIGNED    = "8a: Assignment Signed"
+    ASSIGNED_EARNEST     = "8b: Assigned & Earnest Collected"
+    CLOSED               = "9. Closed"
+    # Exit buckets
+    X_UNREALISTIC        = "x1: Unrealistic Seller"
+    X_NOT_INTERESTED     = "x2: Not Interested"
+    X_REFERRED_REALTOR   = "x3: Referred to Realtor"
+    X_UNDER_CONTRACT_ELSE= "x4: Under contract with someone else"
+    X_WRONG_NUMBER       = "x5: wrong number"
+    X_FOLLOW_UP_SCHED    = "x7: follow up scheduled"
+    X_NO_DEAL            = "x8: No deal"
+    X_ALREADY_SOLD       = "x9: already sold"
+    X_OLD_IMPORT         = "x10: Old Lead just imported"
+    X_DO_NOT_CONTACT     = "x11 DO NOT contact"
+
+LEAD_STATUS_ORDER = [s.value for s in LeadStatus]
