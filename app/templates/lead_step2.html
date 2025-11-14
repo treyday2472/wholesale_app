@@ -2,450 +2,54 @@
 {% block content %}
 <h2 class="mb-3">Step 2: Property Details</h2>
 
-<form method="POST" enctype="multipart/form-data" id="leadStep2Form" novalidate>
+<form method="POST" id="LeadStep2CoreForm" novalidate>
   {{ form.hidden_tag() }}
-  {{ form.attempts_count(id="attempts_count") }}
 
-  <!-- ===== Block: Q1–Q4 (initially visible) ===== -->
-  <div id="block_1to4">
-    <!-- 1 -->
-    <div class="mb-3" id="q1">
-      {{ form.why_sell.label(class="form-label") }}
-      {{ form.why_sell(class="form-control", rows=2, placeholder="Divorce, relocating, inherited, tired landlord, etc.") }}
-    </div>
-
-    <!-- 2 (REQUIRED) -->
-    <div class="mb-3" id="q2">
-      {{ form.occupancy_status.label(class="form-label") }} <span class="text-danger">*</span>
-      {{ form.occupancy_status(class="form-select", id="occupancy_status") }}
-      {% if form.occupancy_status.errors %}
-        <div class="text-danger small">{{ form.occupancy_status.errors[0] }}</div>
-      {% endif %}
-    </div>
-
-    <!-- Rental branch (only when rented) -->
-    <div id="rentalBlock" style="display:none;">
-      <div class="mb-3">
-        {{ form.rent_amount.label(class="form-label") }}
-        {{ form.rent_amount(class="form-control", placeholder="$ per month") }}
-      </div>
-
-      <!-- 2a -->
-      <div class="mb-3">
-        {{ form.is_multifam.label(class="form-label") }}
-        {{ form.is_multifam(class="form-select", id="is_multifam") }}
-      </div>
-
-      <div id="multiBlock" style="display:none;">
-        <!-- 2b + 2d -->
-        <div class="row">
-          <div class="col-md-6 mb-3">
-            {{ form.units_count.label(class="form-label") }}
-            {{ form.units_count(class="form-control", placeholder="e.g., 4", id="units_count") }}
-          </div>
-          <div class="col-md-6 mb-3">
-            {{ form.vacant_units.label(class="form-label") }}
-            {{ form.vacant_units(class="form-control", placeholder="e.g., 1") }}
-          </div>
-        </div>
-
-        <!-- 2c -->
-        <div class="mb-2"><strong>2c) How much is each unit rented for?</strong></div>
-        <div id="unitRentsContainer" class="mb-3"></div>
-        {{ form.unit_rents_json(id="unit_rents_json") }}
-      </div>
-    </div>
-
-    <!-- 3 (REQUIRED) -->
-    <div class="mb-3" id="q3">
-      {{ form.listed_with_realtor.label(class="form-label") }} <span class="text-danger">*</span>
-      {{ form.listed_with_realtor(class="form-select", id="listed_with_realtor") }}
-      {% if form.listed_with_realtor.errors %}
-        <div class="text-danger small">{{ form.listed_with_realtor.errors[0] }}</div>
-      {% endif %}
-    </div>
-
-    <!-- 3a (only when listed = yes) -->
-    <div id="listPriceBlock" style="display:none;">
-      <div class="mb-3">
-        {{ form.list_price.label(class="form-label") }}
-        {{ form.list_price(class="form-control", placeholder="$ listing price") }}
-      </div>
-    </div>
-
-    <!-- 4 (REQUIRED) -->
-    <div class="mb-3" id="q4">
-      {{ form.condition.label(class="form-label") }} <span class="text-danger">*</span>
-      {{ form.condition(class="form-select", id="condition") }}
-      {% if form.condition.errors %}
-        <div class="text-danger small">{{ form.condition.errors[0] }}</div>
-      {% endif %}
-    </div>
+  <div class="mb-3">
+    {{ form.why_sell.label(class="form-label") }}
+    {{ form.why_sell(class="form-control", rows=2, placeholder="Divorce, relocating, inherited, tired landlord, etc.") }}
+    {% for err in form.why_sell.errors %}<div class="text-danger small">{{ err }}</div>{% endfor %}
   </div>
 
-  <!-- ===== Q5 onward (progressively revealed) ===== -->
-
-  <!-- 5 -->
-  <div class="mb-3" id="q5" style="display:none;">
-    {{ form.repairs_needed.label(class="form-label") }}
-    {{ form.repairs_needed(class="form-select", id="repairs_needed") }}
-    <div class="form-text">Pick the best fit; explain next.</div>
-    <a href="#" class="small text-muted skip" data-target="q5">Skip this</a>
+  <div class="mb-3">
+    {{ form.property_type.label(class="form-label") }} <span class="text-danger">*</span>
+    {{ form.property_type(class="form-select", id="property_type") }}
+    {% for err in form.property_type.errors %}<div class="text-danger small">{{ err }}</div>{% endfor %}
   </div>
 
-  <!-- 6a -->
-  <div class="mb-3" id="q6a" style="display:none;">
-    {{ form.repairs_cost_est.label(class="form-label") }}
-    {{ form.repairs_cost_est(class="form-control", placeholder="$ and a short reason") }}
-    <a href="#" class="small text-muted skip" data-target="q6a">Skip this</a>
+  <div class="mb-3">
+    {{ form.occupancy_status.label(class="form-label") }} <span class="text-danger">*</span>
+    {{ form.occupancy_status(class="form-select", id="occupancy_status") }}
+    {% for err in form.occupancy_status.errors %}<div class="text-danger small">{{ err }}</div>{% endfor %}
   </div>
 
-  <!-- 6b -->
-  <div class="mb-3" id="q6b" style="display:none;">
-    {{ form.worth_estimate.label(class="form-label") }}
-    {{ form.worth_estimate(class="form-control", placeholder="$ your estimate") }}
-    <a href="#" class="small text-muted skip" data-target="q6b">Skip this</a>
+  <div class="mb-3">
+    {{ form.listed_with_realtor.label(class="form-label") }} <span class="text-danger">*</span>
+    {{ form.listed_with_realtor(class="form-select", id="listed_with_realtor") }}
+    {% for err in form.listed_with_realtor.errors %}<div class="text-danger small">{{ err }}</div>{% endfor %}
   </div>
 
-  <!-- 7 -->
-  <div class="mb-3" id="q7" style="display:none;">
-    {{ form.behind_on_payments.label(class="form-label") }}
-    {{ form.behind_on_payments(class="form-select", id="behind_on_payments") }}
+  <div class="mb-3" id="list_price_block" style="display:none;">
+    {{ form.list_price.label(class="form-label") }}
+    {{ form.list_price(class="form-control", placeholder="$ listing price") }}
   </div>
 
-  <!-- 8a–8d (only when 7=yes) -->
-  <div id="q8" style="display:none;">
-    <div class="row">
-      <div class="col-md-6 mb-3">
-        {{ form.behind_amount.label(class="form-label") }}
-        {{ form.behind_amount(class="form-control") }}
-      </div>
-      <div class="col-md-6 mb-3">
-        {{ form.loan_balance.label(class="form-label") }}
-        {{ form.loan_balance(class="form-control") }}
-      </div>
-    </div>
-    <div class="row">
-      <div class="col-md-6 mb-3">
-        {{ form.monthly_payment.label(class="form-label") }}
-        {{ form.monthly_payment(class="form-control") }}
-      </div>
-      <div class="col-md-6 mb-3">
-        {{ form.interest_rate.label(class="form-label") }}
-        {{ form.interest_rate(class="form-control", placeholder="%") }}
-      </div>
-    </div>
-    <a href="#" class="small text-muted skip" data-target="q8">Skip this</a>
+  <div class="mb-3">
+    {{ form.condition.label(class="form-label") }} <span class="text-danger">*</span>
+    {{ form.condition(class="form-select", id="condition") }}
+    {% for err in form.condition.errors %}<div class="text-danger small">{{ err }}</div>{% endfor %}
   </div>
 
-  <!-- 9 -->
-  <div class="mb-3" id="q9" style="display:none;">
-    {{ form.will_sell_for_amount_owed.label(class="form-label") }}
-    {{ form.will_sell_for_amount_owed(class="form-select") }}
-    <a href="#" class="small text-muted skip" data-target="q9">Skip this</a>
-  </div>
-
-  <!-- 10 -->
-  <div class="mb-3" id="q10" style="display:none;">
-    {{ form.in_bankruptcy.label(class="form-label") }}
-    {{ form.in_bankruptcy(class="form-select") }}
-    <a href="#" class="small text-muted skip" data-target="q10">Skip this</a>
-  </div>
-
-  <!-- 11 -->
-  <div class="mb-3" id="q11" style="display:none;">
-    {{ form.lowest_amount.label(class="form-label") }}
-    {{ form.lowest_amount(class="form-control", placeholder="$") }}
-    <a href="#" class="small text-muted skip" data-target="q11">Skip this</a>
-  </div>
-
-  <!-- 12 -->
-  <div class="mb-3" id="q12" style="display:none;">
-    {{ form.flexible_price.label(class="form-label") }}
-    {{ form.flexible_price(class="form-select") }}
-    <a href="#" class="small text-muted skip" data-target="q12">Skip this</a>
-  </div>
-
-  <!-- 13 -->
-  <div class="mb-3" id="q13" style="display:none;">
-    <label class="form-label">
-      13) Would you be interested in
-      <a href="{{ url_for('main.learn_seller_financing') }}" target="_blank">seller financing</a>?
-    </label>
-    {{ form.seller_finance_interest(class="form-select") }}
-    <a href="#" class="small text-muted skip" data-target="q13">Skip this</a>
-  </div>
-
-  <!-- 14 -->
-  <div class="row" id="q14" style="display:none;">
-    <div class="col-md-8 mb-3">
-      {{ form.title_others.label(class="form-label") }}
-      {{ form.title_others(class="form-control", placeholder="Spouse, sibling, etc.") }}
-    </div>
-    <div class="col-md-4 mb-3">
-      {{ form.title_others_willing.label(class="form-label") }}
-      {{ form.title_others_willing(class="form-select") }}
-    </div>
-    <div class="mb-2">
-      <a href="#" class="small text-muted skip" data-target="q14">Skip this</a>
-    </div>
-  </div>
-
-  <!-- 15 -->
-  <div class="mb-3" id="q15" style="display:none;">
-    {{ form.how_hear_about_us.label(class="form-label") }}
-    {{ form.how_hear_about_us(class="form-select", id="how_hear_about_us") }}
-    <div id="hearOtherBlock" style="display:none;" class="mt-2">
-      {{ form.how_hear_other.label(class="form-label") }}
-      {{ form.how_hear_other(class="form-control") }}
-    </div>
-    <a href="#" class="small text-muted skip" data-target="q15">Skip this</a>
-  </div>
-
-  <!-- Notes (after 15) -->
-  <div class="mb-3" id="q_notes" style="display:none;">
-    {{ form.notes.label(class="form-label") }}
-    {{ form.notes(class="form-control", rows=3) }}
-  </div>
-
-  <!-- Attachments (if present in forms.py) -->
-  {% if form.attachments %}
-    <div class="mb-3" id="q_attachments" style="display:none;">
-      {{ form.attachments.label(class="form-label") }}
-      {{ form.attachments(class="form-control", multiple=True,
-                          accept="image/*,video/*,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv,text/plain,application/vnd.openxmlformats-officedocument.presentationml.presentation,.zip") }}
-      <div class="form-text">Upload photos, videos, or docs (optional).</div>
-    </div>
-  {% endif %}
-
-  {{ form.unit_rents_json(id="unit_rents_json") }}
-  {{ form.intake_payload(id="intake_payload") }}
-
-  <div id="submitRow" style="display:none;">
-    {{ form.submit(class="btn btn-primary") }}
-  </div>
+  <button class="btn btn-primary" type="submit">Continue</button>
 </form>
+{% endblock %}
 
 <script>
 (function(){
-  const $  = (id) => document.getElementById(id);
-  const show = (el, on) => { if (el) el.style.display = on ? "" : "none"; };
-  const val = (el) => (el && (el.value || "").trim()) || "";
-  const isVisible = (el) => !!(el && el.offsetParent !== null);
-
-  const form  = $("leadStep2Form");
-  const tries = $("attempts_count");
-
-  // gating fields
-  const occ     = $("occupancy_status");
-  const listed  = $("listed_with_realtor");
-  const cond    = $("condition");
-
-  // conditional mini-blocks
-  const rentalBlk = $("rentalBlock");
-  const multiSel  = $("is_multifam");
-  const multiBlk  = $("multiBlock");
-  const unitsIn   = $("units_count");
-  const unitWrap  = $("unitRentsContainer");
-  const listBlk   = $("listPriceBlock");
-  const behindSel = $("behind_on_payments");
-  const behindBlk = $("q8");
-  const hearSel   = $("how_hear_about_us");
-  const hearBlk   = $("hearOtherBlock");
-
-  const submitRow = $("submitRow");
-  const intake    = $("intake_payload");
-
-  const skipped = new Set();
-
-  // ordered progression of main steps
-  const steps = [
-    "q1","q2","q3","q4","q5","q6a","q6b","q7","q8","q9",
-    "q10","q11","q12","q13","q14","q15","q_notes","q_attachments","submitRow"
-  ].filter(id => $(id)); // keep only existing nodes
-
-  function focusFirstInput(container) {
-    if (!container) return;
-    const el = container.querySelector('input, select, textarea, button');
-    if (el) el.focus({preventScroll:true});
-  }
-
-  function scrollTo(el) {
-    if (!el) return;
-    el.scrollIntoView({behavior: "smooth", block: "start"});
-  }
-
-  function advanceFrom(currentId) {
-    revealChain(); // ensure visibility is up to date
-
-    const idx = steps.indexOf(currentId);
-    for (let i = idx + 1; i < steps.length; i++) {
-      const next = $(steps[i]);
-      if (isVisible(next)) {
-        scrollTo(next);
-        focusFirstInput(next);
-        return;
-      }
-    }
-    // if none visible yet (waiting on a dependency), just no-op
-  }
-
-  function toggleRental(){ show(rentalBlk, val(occ) === "rented"); }
-  function toggleMulti(){ show(multiBlk, val(multiSel) === "yes"); }
-  function toggleList(){ show(listBlk, val(listed) === "yes"); }
-  function toggleBehind(){ show(behindBlk, val(behindSel) === "yes"); }
-  function toggleHearOther(){ show(hearBlk, val(hearSel) === "other"); }
-
-  function rebuildUnitInputs(){
-    unitWrap.innerHTML = "";
-    const n = parseInt(val(unitsIn) || "0", 10);
-    if (!isFinite(n) || n <= 0) return;
-    for(let i=1;i<=n;i++){
-      const div = document.createElement('div');
-      div.className = "mb-2";
-      div.innerHTML = '<label class="form-label">Unit '+i+' rent ($/mo)</label><input class="form-control unit-rent" data-unit="'+i+'" placeholder="e.g., 950">';
-      unitWrap.appendChild(div);
-    }
-  }
-
-  function answeredBlock(id){
-    if (id === "q8") {
-      // consider q8 answered if any of its fields have a value or it's skipped
-      const any = Array.from($("q8").querySelectorAll("input,select,textarea"))
-        .some(inp => (inp.value||"").trim() !== "");
-      return skipped.has("q8") || any;
-    }
-    return skipped.has(id); // other blocks use field listeners directly
-  }
-
-  function revealChain(){
-    show($("block_1to4"), true);
-
-    toggleRental();
-    toggleMulti();
-    toggleList();
-    toggleHearOther();
-
-    const group1Complete = (val(occ) !== "" && val(listed) !== "" && val(cond) !== "");
-    show($("q5"), group1Complete);
-
-    show($("q6a"), group1Complete && (val($("repairs_needed")) !== "" || skipped.has("q5")));
-    show($("q6b"), isVisible($("q6a")) && (val($("repairs_cost_est")) !== "" || skipped.has("q6a")));
-    show($("q7"), isVisible($("q6b")) && (val($("worth_estimate")) !== "" || skipped.has("q6b")));
-
-    if (isVisible($("q7")) && val(behindSel) !== "") {
-      toggleBehind(); // show/hide q8
-      show($("q9"), (val(behindSel) === "yes") ? answeredBlock("q8") : true);
-    } else {
-      show(behindBlk, false);
-      show($("q9"), false);
-    }
-
-    show($("q10"), isVisible($("q9"))  && (val($("will_sell_for_amount_owed")) !== "" || skipped.has("q9")));
-    show($("q11"), isVisible($("q10")) && (val($("in_bankruptcy")) !== "" || skipped.has("q10")));
-    show($("q12"), isVisible($("q11")) && (val($("lowest_amount")) !== "" || skipped.has("q11")));
-    show($("q13"), isVisible($("q12")) && (val($("flexible_price")) !== "" || skipped.has("q12")));
-    show($("q14"), isVisible($("q13")) && (val($("seller_finance_interest")) !== "" || skipped.has("q13")));
-    show($("q15"), isVisible($("q14")) && (
-      val($("title_others")) !== "" || val($("title_others_willing")) !== "" || skipped.has("q14")
-    ));
-
-    const q15ready = (val(hearSel) !== "" || skipped.has("q15"));
-    show($("q_notes"), isVisible($("q15")) && q15ready);
-    {% if form.attachments %} show($("q_attachments"), isVisible($("q15")) && q15ready); {% endif %}
-    show(submitRow, isVisible($("q15")) && q15ready);
-  }
-
-  // --- skip links -> advance immediately
-  document.querySelectorAll('.skip').forEach(a => {
-    a.addEventListener('click', (e) => {
-      e.preventDefault();
-      const t = a.getAttribute('data-target');
-      if (t) skipped.add(t);
-      revealChain();
-      advanceFrom(t);
-    });
-  });
-
-  // --- required gating fields ---
-  occ && occ.addEventListener('change', () => { toggleRental(); revealChain(); advanceFrom('q2'); });
-  listed && listed.addEventListener('change', () => { toggleList(); revealChain(); advanceFrom('q3'); });
-  cond && cond.addEventListener('change', () => { revealChain(); advanceFrom('q4'); });
-
-  // --- optional progress listeners ---
-  $("repairs_needed") && $("repairs_needed").addEventListener('change', () => { revealChain(); advanceFrom('q5'); });
-  $("repairs_cost_est") && $("repairs_cost_est").addEventListener('change', () => { revealChain(); advanceFrom('q6a'); });
-  $("repairs_cost_est") && $("repairs_cost_est").addEventListener('blur',   () => { revealChain(); advanceFrom('q6a'); });
-  $("worth_estimate") && $("worth_estimate").addEventListener('change', () => { revealChain(); advanceFrom('q6b'); });
-  $("worth_estimate") && $("worth_estimate").addEventListener('blur',   () => { revealChain(); advanceFrom('q6b'); });
-
-  behindSel && behindSel.addEventListener('change', () => { toggleBehind(); revealChain(); advanceFrom('q7'); });
-
-  // q8 fields -> when any filled, advance
-  ["behind_amount","loan_balance","monthly_payment","interest_rate"].forEach(id => {
-    const el = $(id);
-    if (el) {
-      el.addEventListener('change', () => { revealChain(); if (answeredBlock('q8')) advanceFrom('q8'); });
-      el.addEventListener('blur',   () => { revealChain(); if (answeredBlock('q8')) advanceFrom('q8'); });
-    }
-  });
-
-  $("will_sell_for_amount_owed") && $("will_sell_for_amount_owed").addEventListener('change', () => { revealChain(); advanceFrom('q9'); });
-  $("in_bankruptcy") && $("in_bankruptcy").addEventListener('change', () => { revealChain(); advanceFrom('q10'); });
-  $("lowest_amount") && $("lowest_amount").addEventListener('blur',   () => { revealChain(); advanceFrom('q11'); });
-  $("flexible_price") && $("flexible_price").addEventListener('change', () => { revealChain(); advanceFrom('q12'); });
-  $("seller_finance_interest") && $("seller_finance_interest").addEventListener('change', () => { revealChain(); advanceFrom('q13'); });
-
-  // q14 -> advance when either field updated
-  ["title_others","title_others_willing"].forEach(id => {
-    const el = $(id);
-    if (el) {
-      const evt = (el.tagName === 'SELECT') ? 'change' : 'blur';
-      el.addEventListener(evt, () => { revealChain(); advanceFrom('q14'); });
-    }
-  });
-
-  // q15
-  hearSel && hearSel.addEventListener('change', () => {
-    toggleHearOther(); revealChain();
-    // if not "other" or they already typed other, advance
-    if (val(hearSel) !== "other" || val($("how_hear_other")) !== "") advanceFrom('q15');
-  });
-  $("how_hear_other") && $("how_hear_other").addEventListener('blur', () => { revealChain(); advanceFrom('q15'); });
-
-  // other conditionals
-  $("is_multifam") && $("is_multifam").addEventListener('change', () => { toggleMulti(); revealChain(); });
-  unitsIn && unitsIn.addEventListener('input', () => { rebuildUnitInputs(); });
-
-  // init visibility
-  toggleRental(); toggleMulti(); toggleList(); toggleBehind(); toggleHearOther();
-  rebuildUnitInputs();
-  revealChain();
-
-  // Submit — keep your attempts logic and intake capture
-  form.addEventListener('submit', function(){
-    const missing = (!val(occ) || !val(listed) || !val(cond));
-    const n = parseInt((tries && tries.value) || "0", 10);
-    if (missing && tries && n < 3) {
-      tries.value = String(n + 1);
-    }
-
-    // capture per-unit rents
-    const rents = Array.from(document.querySelectorAll('.unit-rent')).map(inp => (inp.value||'').trim());
-    const unitRentsField = $("unit_rents_json");
-    if (unitRentsField) unitRentsField.value = JSON.stringify(rents);
-
-    // stash visible fields into intake JSON
-    const data = {};
-    Array.from(form.elements).forEach(el => {
-      if (!el.name || el.type === 'hidden') return;
-      if (el.tagName === 'SELECT' || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
-        data[el.name] = el.value;
-      }
-    });
-    if (intake) intake.value = JSON.stringify(data);
-  });
+  const sel = document.getElementById("listed_with_realtor");
+  const block = document.getElementById("list_price_block");
+  function toggle(){ block.style.display = (sel && sel.value === "yes") ? "" : "none"; }
+  sel && sel.addEventListener("change", toggle);
+  toggle();
 })();
-</script>
-
-{% endblock %}
+</script

@@ -8,9 +8,6 @@ from flask import (
 )
 
 
-
-
-from .services import attom as attom_svc
 from datetime import datetime
 from math import radians, sin, cos, asin, sqrt
 from .services.ai import suggest_arv
@@ -27,8 +24,8 @@ from .services.auto_offer import auto_enrich_and_offer_for_lead
 from . import db
 from .models import Lead, Buyer, Property
 from .forms import (
-    LeadStep1Form, LeadStep2Form, UpdateStatusForm,
-    BuyerStep1Form, BuyerStep2Form, PropertyForm
+    LeadStep1Form, UpdateStatusForm,
+    BuyerStep1Form, BuyerStep2Form, PropertyForm, LeadStep3MoreForm, LeadStep2CoreForm
 )
 
 #from services.zillow_fetch import search_recently_sold
@@ -130,23 +127,24 @@ def allowed_file(filename: str) -> bool:
 def home():
     return redirect(url_for('main.leads_list'))
 
-# ---------- LEADS ----------
+# ---------------- Step 1 ----------------
 @main.route('/lead_step1', methods=['GET', 'POST'])
 def lead_new_step1():
     form = LeadStep1Form()
     if form.validate_on_submit():
         session['lead_step1'] = {
-            'seller_first_name': form.seller_first_name.data.strip(),
-            'seller_last_name':  (form.seller_last_name.data or '').strip(),
-            'email':             form.email.data.strip(),
-            'phone':             form.phone.data.strip(),
-            'address':           form.address.data.strip(),
-            'full_address':      form.full_address.data or form.address.data.strip(),
+            'seller_first_name': (form.seller_first_name.data or '').strip(),
+            'seller_last_name':  (form.seller_last_name.data  or '').strip(),
+            'email':             (form.email.data            or '').strip(),
+            'phone':             (form.phone.data            or '').strip(),
+            'address':           (form.address.data          or '').strip(),
+            'full_address':      form.full_address.data or (form.address.data or '').strip(),
             'lat':               form.lat.data or None,
             'lng':               form.lng.data or None,
         }
-        return redirect(url_for('main.lead_new_step2'))
 
+        
+        return redirect(url_for('main.lead_new_step2'))
     return render_template(
         'lead_step1.html',
         form=form,
@@ -156,12 +154,7 @@ def lead_new_step1():
 
 
 
-
-
-
-
-
-
+# ---------------- Step 2 (CORE ONLY: 5 fields) ----------------
 @main.route('/lead/new/step2', methods=['GET', 'POST'])
 def lead_new_step2():
     step1 = session.get('lead_step1')
@@ -169,132 +162,126 @@ def lead_new_step2():
         flash("Please complete Step 1 first.", "warning")
         return redirect(url_for('main.lead_new_step1'))
 
-    form = LeadStep2Form()
+    form = LeadStep2CoreForm()
 
-    # Initialize attempts on GET (so the hidden field has a value)
-    if request.method == 'GET' and not (form.attempts_count.data or "").strip():
-        form.attempts_count.data = '0'
+    if form.validate_on_submit():
+        # Required fields only (your form should enforce required)
+        cond_value = form.condition.data
 
-    # Parse current attempts for this POST cycle
-    attempts = 0
-    if request.method == 'POST':
-        try:
-            attempts = int(request.form.get('attempts_count', 0) or 0)
-        except Exception:
-            attempts = 0
+        lead = Lead(
+            # from Step 1
+            seller_first_name = step1.get('seller_first_name') or None,
+            seller_last_name  = step1.get('seller_last_name') or None,
+            email             = step1.get('email') or None,
+            phone             = step1.get('phone') or None,
+            address           = step1.get('address') or None,
 
-        # After 3 tries, relax a few fields
-        if attempts >= 3:
-            for f in (form.occupancy_status, form.listed_with_realtor, form.condition):
-                f.validators = [Optional()]
+            # Step 2 — real columns you already have
+            why_sell         = (form.why_sell.data or '').strip() or None,
+            property_type    = form.property_type.data or None,
+            occupancy_status = form.occupancy_status.data or None,
+            condition        = int(cond_value) if cond_value else None,
 
-        if form.validate():
-            # Use default condition "7" if blank and we've already given grace
-            cond_value = form.condition.data or ("7" if attempts >= 3 else None)
+            lead_source = "Web Form",)
 
-            # --- handle uploads (photos/attachments) early so we can store names on the lead ---
-            upload_dir = current_app.config.get(
-                'UPLOAD_FOLDER',
-                os.path.join(current_app.static_folder, 'uploads')
-            )
-            os.makedirs(upload_dir, exist_ok=True)
-            saved_files = []
+        intake = {
+            "listed_with_realtor": form.listed_with_realtor.data or "",
+                }
+        if (form.listed_with_realtor.data or "") == "yes":
+            intake["list_price"] = (form.list_price.data or "").strip()
 
-            files = []
-            if 'attachments' in request.files:
-                files.extend(request.files.getlist('attachments'))
-            if 'photos' in request.files:
-                files.extend(request.files.getlist('photos'))
+        lead.intake = json.dumps(intake)
+            
 
-            for file in files:
-                if not file or not getattr(file, 'filename', ''):
-                    continue
-                filename = secure_filename(file.filename)
-                base, ext = os.path.splitext(filename)
-                final = filename
-                i = 1
-                while os.path.exists(os.path.join(upload_dir, final)):
-                    final = f"{base}_{i}{ext}"
-                    i += 1
-                file.save(os.path.join(upload_dir, final))
-                saved_files.append(final)
+        db.session.add(lead)
+        db.session.commit()
 
-            # --- create the lead ---
-            lead = Lead(
-                seller_first_name = step1['seller_first_name'],
-                seller_last_name  = step1.get('seller_last_name') or None,
-                email             = step1['email'],
-                phone             = step1['phone'],
-                address           = step1['address'],
-                occupancy_status  = form.occupancy_status.data or None,
-                condition         = cond_value,  # may be "7" default
-                notes             = (form.notes.data or '').strip() or None,
-                lead_source       = "Web Form",
-            )
+        # clear Step 1 session and go to Step 3
+        session.pop('lead_step1', None)
+        return redirect(url_for('main.lead_new_step3', lead_id=lead.id))
 
-            # mirror structured intake (keep lightweight; strings preferred)
-            lead.intake = {
-                "why_sell": form.why_sell.data,
-                "occupancy_status": form.occupancy_status.data,
-                "rent_amount": form.rent_amount.data,
-                "is_multifam": form.is_multifam.data,
-                "units_count": form.units_count.data,
-                "unit_rents_json": form.unit_rents_json.data,
-                "vacant_units": form.vacant_units.data,
-                "listed_with_realtor": form.listed_with_realtor.data,
-                "list_price": form.list_price.data,
-                "condition": cond_value,
-                "repairs_needed": form.repairs_needed.data,
-                "repairs_cost_est": form.repairs_cost_est.data,
-                "worth_estimate": form.worth_estimate.data,
-                "behind_on_payments": form.behind_on_payments.data,
-                "behind_amount": form.behind_amount.data,
-                "loan_balance": form.loan_balance.data,
-                "monthly_payment": form.monthly_payment.data,
-                "interest_rate": form.interest_rate.data,
-                "will_sell_for_amount_owed": form.will_sell_for_amount_owed.data,
-                "in_bankruptcy": form.in_bankruptcy.data,
-                "lowest_amount": form.lowest_amount.data,
-                "flexible_price": form.flexible_price.data,
-                "seller_finance_interest": form.seller_finance_interest.data,
-                "title_others": form.title_others.data,
-                "title_others_willing": form.title_others_willing.data,
-                "how_hear_about_us": form.how_hear_about_us.data,
-                "how_hear_other": form.how_hear_other.data,
-            }
-
-            if saved_files:
-                lead.image_files = ",".join(saved_files)
-
-            # Commit once to get lead.id
-            db.session.add(lead)
-            db.session.commit()
-
-            # --- 🔥 Auto-enrich → Property → Initial Offers (cash + owner-fin) ---
-            try:
-                result = auto_enrich_and_offer_for_lead(lead.id)
-                if result.get("ok"):
-                    flash("Lead saved and initial offers generated.", "success")
-                else:
-                    current_app.logger.warning("Auto-offer failed: %s", result.get("error"))
-                    flash("Lead saved. Auto-offer enrich failed; you can create offers manually.", "warning")
-            except Exception as e:
-                current_app.logger.exception("auto_enrich_and_offer_for_lead threw: %s", e)
-                flash("Lead saved. Auto-offer failed; you can create offers manually.", "warning")
-
-            # cleanup step 1 state & go to lead detail
-            session.pop('lead_step1', None)
-            return redirect(url_for("main.lead_detail", lead_id=lead.id))
-
-        else:
-            # bump attempts on failed validation to relax next time if needed
-            try:
-                form.attempts_count.data = str(attempts + 1)
-            except Exception:
-                form.attempts_count.data = "1"
-
-    # GET or invalid POST → re-render (form retains values & field errors)
     return render_template('lead_step2.html', form=form)
+
+
+# ---------------- Step 3 (MORE: rest of fields + uploads) ----------------
+@main.route("/leads/new/step3/<int:lead_id>", methods=["GET","POST"])
+def lead_new_step3(lead_id):
+    lead = Lead.query.get_or_404(lead_id)
+    form = LeadStep3MoreForm(obj=lead)
+
+    if request.method == "POST" and form.validate():
+        # ---- save the rest of the fields (everything beyond the core 5) ----
+        # Examples (adjust to your model):
+        lead.repairs_needed        = form.repairs_needed.data or None
+        lead.repairs_cost_est      = form.repairs_cost_est.data or None
+        lead.worth_estimate        = form.worth_estimate.data or None
+        lead.behind_on_payments    = form.behind_on_payments.data or None
+        lead.behind_amount         = form.behind_amount.data or None
+        lead.loan_balance          = form.loan_balance.data or None
+        lead.monthly_payment       = form.monthly_payment.data or None
+        lead.interest_rate         = form.interest_rate.data or None
+        lead.will_sell_for_amount_owed = form.will_sell_for_amount_owed.data or None
+        lead.in_bankruptcy         = form.in_bankruptcy.data or None
+        lead.lowest_amount         = form.lowest_amount.data or None
+        lead.flexible_price        = form.flexible_price.data or None
+        lead.seller_finance_interest = form.seller_finance_interest.data or None
+        lead.title_others          = (form.title_others.data or '').strip() or None
+        lead.title_others_willing  = form.title_others_willing.data or None
+        lead.how_hear_about_us     = form.how_hear_about_us.data or None
+        lead.how_hear_other        = (form.how_hear_other.data or '').strip() or None
+        lead.notes                 = (form.notes.data or '').strip() or None
+
+        # ---- file uploads (photos/attachments) ----
+        upload_dir = current_app.config.get(
+            'UPLOAD_FOLDER',
+            os.path.join(current_app.static_folder, 'uploads')
+        )
+        os.makedirs(upload_dir, exist_ok=True)
+        saved_files = []
+
+        files = []
+        if 'attachments' in request.files:
+            files.extend(request.files.getlist('attachments'))
+        if 'photos' in request.files:
+            files.extend(request.files.getlist('photos'))
+
+        for file in files:
+            if not file or not getattr(file, 'filename', ''):
+                continue
+            filename = secure_filename(file.filename)
+            base, ext = os.path.splitext(filename)
+            final = filename
+            i = 1
+            while os.path.exists(os.path.join(upload_dir, final)):
+                final = f"{base}_{i}{ext}"
+                i += 1
+            file.save(os.path.join(upload_dir, final))
+            saved_files.append(final)
+
+        if saved_files:
+            lead.image_files = ",".join(filter(None, [(lead.image_files or ""), ",".join(saved_files)]))
+
+        
+
+        db.session.commit()
+
+        # ---- auto-enrich + initial offers (AFTER step 3 save) ----
+        try:
+            result = auto_enrich_and_offer_for_lead(lead.id)
+            if result.get("ok"):
+                flash("Lead saved and initial offers generated.", "success")
+            else:
+                current_app.logger.warning("Auto-offer failed: %s", result.get("error"))
+                flash("Lead saved. Auto-offer enrich failed; you can create offers manually.", "warning")
+        except Exception as e:
+            current_app.logger.exception("auto_enrich_and_offer_for_lead threw: %s", e)
+            flash("Lead saved. Auto-offer failed; you can create offers manually.", "warning")
+
+        return redirect(url_for("main.lead_detail", lead_id=lead.id))
+
+    return render_template("lead_step3.html", form=form, lead=lead)
+
+
 
 @main.route('/leads')
 def leads_list():
@@ -1213,7 +1200,7 @@ def enrich_attom(property_id):
         if "single" in s or "sfr" in s: return "sfr"
         if "condo" in s: return "condo"
         if "town"  in s: return "townhouse"
-        if "duplex" in s or "triplex" in s or "quad" in s or "multi" in s: return "multi"
+        if "duplex" in s: return "duplex"
         if "manufactured" in s or "mobile" in s: return "manufactured"
         return None
 
@@ -1386,7 +1373,7 @@ def comps_ai_select(property_id):
         if "single" in s or "sfr" in s: return "sfr"
         if "condo" in s: return "condo"
         if "town"  in s: return "townhouse"
-        if "duplex" in s or "triplex" in s or "quad" in s or "multi" in s: return "multi"
+        if "duplex" in s: return "duplex"
         if "manufactured" in s or "mobile" in s: return "manufactured"
         return None
 

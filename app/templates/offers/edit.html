@@ -1,9 +1,32 @@
 {% extends "base.html" %}
+{% import "_macros.html" as ui %}
 {% block title %}Offer {{ offer.id }}{% endblock %}
 
 
 
 {% block content %}
+
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <div>
+    <h2 class="mb-0">
+      {% if offer.prop %}
+        {{ offer.prop.full_address or offer.prop.address }}
+      {% else %}
+        Offer
+      {% endif %}
+    </h2>
+    <div class="small text-muted">
+      {% if offer.lead %}
+        Seller: {{ offer.lead.seller_first_name }} {{ offer.lead.seller_last_name or '' }} ·
+        Status: {{ ui.status_badge(offer.lead.lead_status) }}
+      {% endif %}
+    </div>
+  </div>
+  <div>
+    <a class="btn btn-outline-light" href="{{ url_for('offers.list_offers', lead_id=offer.lead_id) }}">Back to Offers</a>
+  </div>
+</div>
+
 <div class="container my-4">
   <div class="d-flex justify-content-between align-items-center mb-3">
     <h3 class="mb-0">Offer #{{ offer.id }}</h3>

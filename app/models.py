@@ -50,9 +50,11 @@ class Lead(db.Model):
     # NEW
     occupancy_status  = db.Column(db.String(30))   # vacant / owner_occupied / rented
     closing_date      = db.Column(db.String(20))   # keep string for now (e.g., '2025-08-31')
-
+    occupancy_status    = db.Column(db.String(20))
+    listed_with_realtor = db.Column(db.String(5))    # "yes"/"no" or Boolean
+    property_type       = db.Column(db.String(50))
     condition         = db.Column(db.String(10), default="7")
-    reason            = db.Column(db.Text)
+    why_sell            = db.Column(db.Text)         # if you want it as a column
     timeline          = db.Column(db.String(50))
     asking_price      = db.Column(db.String(50))
     property_type     = db.Column(db.String(50))

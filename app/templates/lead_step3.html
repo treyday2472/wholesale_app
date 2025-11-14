@@ -1,0 +1,243 @@
+{% extends "base.html" %}
+{% block content %}
+<h2 class="mb-3">Step 3: More Property Details</h2>
+
+<form method="POST" enctype="multipart/form-data" id="LeadStep3MoreForm" novalidate>
+  {{ form.hidden_tag() }}
+
+  <!-- ===== Q5 onward (progressively revealed) ===== -->
+
+  <!-- 5 -->
+  <div class="mb-3">
+    {{ form.repairs_needed.label(class="form-label") }}
+    {{ form.repairs_needed(class="form-select", id="repairs_needed") }}
+    <div class="form-text">Pick the best fit; explain next.</div>
+    <a href="#" class="small text-muted skip" data-target="q5">Skip this</a>
+  </div>
+
+  <!-- 6a -->
+  <div class="mb-3" id="q6a" style="display:none;">
+    {{ form.repairs_cost_est.label(class="form-label") }}
+    {{ form.repairs_cost_est(class="form-control", placeholder="$ and a short reason") }}
+    <a href="#" class="small text-muted skip" data-target="q6a">Skip this</a>
+  </div>
+
+  <!-- 6b -->
+  <div class="mb-3" id="q6b" style="display:none;">
+    {{ form.worth_estimate.label(class="form-label") }}
+    {{ form.worth_estimate(class="form-control", placeholder="$ your estimate") }}
+    <a href="#" class="small text-muted skip" data-target="q6b">Skip this</a>
+  </div>
+
+  <!-- 7 -->
+  <div class="mb-3" id="q7" style="display:none;">
+    {{ form.behind_on_payments.label(class="form-label") }}
+    {{ form.behind_on_payments(class="form-select", id="behind_on_payments") }}
+  </div>
+
+  <!-- 8a–8d (only when 7=yes) -->
+  <div id="q8" style="display:none;">
+    <div class="row">
+      <div class="col-md-6 mb-3">
+        {{ form.behind_amount.label(class="form-label") }}
+        {{ form.behind_amount(class="form-control") }}
+      </div>
+      <div class="col-md-6 mb-3">
+        {{ form.loan_balance.label(class="form-label") }}
+        {{ form.loan_balance(class="form-control") }}
+      </div>
+    </div>
+    <div class="row">
+      <div class="col-md-6 mb-3">
+        {{ form.monthly_payment.label(class="form-label") }}
+        {{ form.monthly_payment(class="form-control") }}
+      </div>
+      <div class="col-md-6 mb-3">
+        {{ form.interest_rate.label(class="form-label") }}
+        {{ form.interest_rate(class="form-control", placeholder="%") }}
+      </div>
+    </div>
+    <a href="#" class="small text-muted skip" data-target="q8">Skip this</a>
+  </div>
+
+  <!-- 9 -->
+  <div class="mb-3" id="q9" style="display:none;">
+    {{ form.will_sell_for_amount_owed.label(class="form-label") }}
+    {{ form.will_sell_for_amount_owed(class="form-select") }}
+    <a href="#" class="small text-muted skip" data-target="q9">Skip this</a>
+  </div>
+
+  <!-- 10 -->
+  <div class="mb-3" id="q10" style="display:none;">
+    {{ form.in_bankruptcy.label(class="form-label") }}
+    {{ form.in_bankruptcy(class="form-select") }}
+    <a href="#" class="small text-muted skip" data-target="q10">Skip this</a>
+  </div>
+
+  <!-- 11 -->
+  <div class="mb-3" id="q11" style="display:none;">
+    {{ form.lowest_amount.label(class="form-label") }}
+    {{ form.lowest_amount(class="form-control", placeholder="$") }}
+    <a href="#" class="small text-muted skip" data-target="q11">Skip this</a>
+  </div>
+
+  <!-- 12 -->
+  <div class="mb-3" id="q12" style="display:none;">
+    {{ form.flexible_price.label(class="form-label") }}
+    {{ form.flexible_price(class="form-select") }}
+    <a href="#" class="small text-muted skip" data-target="q12">Skip this</a>
+  </div>
+
+  <!-- 13 -->
+  <div class="mb-3" id="q13" style="display:none;">
+    <label class="form-label">
+      13) Would you be interested in
+      <a href="{{ url_for('main.learn_seller_financing') }}" target="_blank">seller financing</a>?
+    </label>
+    {{ form.seller_finance_interest(class="form-select") }}
+    <a href="#" class="small text-muted skip" data-target="q13">Skip this</a>
+  </div>
+
+  <!-- 14 -->
+  <div class="row" id="q14" style="display:none;">
+    <div class="col-md-8 mb-3">
+      {{ form.title_others.label(class="form-label") }}
+      {{ form.title_others(class="form-control", placeholder="Spouse, sibling, etc.") }}
+    </div>
+    <div class="col-md-4 mb-3">
+      {{ form.title_others_willing.label(class="form-label") }}
+      {{ form.title_others_willing(class="form-select") }}
+    </div>
+    <div class="mb-2">
+      <a href="#" class="small text-muted skip" data-target="q14">Skip this</a>
+    </div>
+  </div>
+
+  <!-- 15 -->
+  <div class="mb-3" id="q15" style="display:none;">
+    {{ form.how_hear_about_us.label(class="form-label") }}
+    {{ form.how_hear_about_us(class="form-select", id="how_hear_about_us") }}
+    <div id="hearOtherBlock" style="display:none;" class="mt-2">
+      {{ form.how_hear_other.label(class="form-label") }}
+      {{ form.how_hear_other(class="form-control") }}
+    </div>
+    <a href="#" class="small text-muted skip" data-target="q15">Skip this</a>
+  </div>
+
+  <!-- Notes (after 15) -->
+  <div class="mb-3" id="q_notes" style="display:none;">
+    {{ form.notes.label(class="form-label") }}
+    {{ form.notes(class="form-control", rows=3) }}
+  </div>
+
+  <!-- Attachments (if present in forms.py) -->
+  {% if form.attachments %}
+    <div class="mb-3" id="q_attachments" style="display:none;">
+      {{ form.attachments.label(class="form-label") }}
+      {{ form.attachments(class="form-control", multiple=True,
+                          accept="image/*,video/*,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv,text/plain,application/vnd.openxmlformats-officedocument.presentationml.presentation,.zip") }}
+      <div class="form-text">Upload photos, videos, or docs (optional).</div>
+    </div>
+  {% endif %}
+
+
+  {{ form.intake_payload(id="intake_payload") }}
+
+  <div>
+    {{ form.submit(class="btn btn-primary") }}
+  </div>
+</form>
+<script>
+(function(){
+  const $  = (id) => document.getElementById(id);
+  const show = (el, on) => { if (el) el.style.display = on ? "" : "none"; };
+  const val = (el) => (el && (el.value || "").trim()) || "";
+  const isVisible = (el) => !!(el && el.offsetParent !== null);
+
+  const form   = $("leadStep3Form");
+  const behindSel = $("behind_on_payments");
+  const hearSel   = $("how_hear_about_us");
+
+  function toggleBehind(){ show($("q8"), val(behindSel) === "yes"); }
+  function toggleHearOther(){ show($("hearOtherBlock"), val(hearSel) === "other"); }
+
+  const steps = ["q5","q6a","q6b","q7","q8","q9","q10","q11","q12","q13","q14","q15","q_notes","q_photos","q_attachments","submitRow"]
+    .map(id => $(id)).filter(Boolean);
+
+  const skipped = new Set();
+
+  function answeredBlock(id){
+    if (id === "q8") {
+      const any = Array.from($("q8").querySelectorAll("input,select,textarea"))
+        .some(inp => (inp.value||"").trim() !== "");
+      return skipped.has("q8") || any || val(behindSel) !== "yes";
+    }
+    return skipped.has(id);
+  }
+
+  function revealChain(){
+    // Q5 is always visible
+    show($("q6a"), (val($("repairs_needed")) !== "" || skipped.has("q5")));
+    show($("q6b"), isVisible($("q6a")) && (val($("repairs_cost_est")) !== "" || skipped.has("q6a")));
+    show($("q7"),  isVisible($("q6b")) && (val($("worth_estimate")) !== "" || skipped.has("q6b")));
+
+    if (isVisible($("q7")) && val(behindSel) !== "") {
+      toggleBehind();
+      show($("q9"), (val(behindSel) === "yes") ? answeredBlock("q8") : true);
+    } else {
+      show($("q8"), false);
+      show($("q9"), false);
+    }
+
+    show($("q10"), isVisible($("q9"))  && (val($("will_sell_for_amount_owed")) !== "" || skipped.has("q9")));
+    show($("q11"), isVisible($("q10")) && (val($("in_bankruptcy")) !== "" || skipped.has("q10")));
+    show($("q12"), isVisible($("q11")) && (val($("lowest_amount")) !== "" || skipped.has("q11")));
+    show($("q13"), isVisible($("q12")) && (val($("flexible_price")) !== "" || skipped.has("q12")));
+    show($("q14"), isVisible($("q13")) && (val($("seller_finance_interest")) !== "" || skipped.has("q13")));
+    show($("q15"), isVisible($("q14")) && (val($("title_others")) !== "" || val($("title_others_willing")) !== "" || skipped.has("q14")));
+
+    const q15ready = (val(hearSel) !== "" || skipped.has("q15"));
+    show($("q_notes"),      isVisible($("q15")) && q15ready);
+    show($("q_photos"),     isVisible($("q15")) && q15ready);
+    show($("q_attachments"),isVisible($("q15")) && q15ready);
+    show($("submitRow"),    isVisible($("q15")) && q15ready);
+  }
+
+  document.querySelectorAll('.skip').forEach(a => {
+    a.addEventListener('click', (e) => {
+      e.preventDefault();
+      const t = a.getAttribute('data-target');
+      if (t) skipped.add(t);
+      revealChain();
+      const idx = steps.findIndex(el => el && el.id === t);
+      for (let i = idx + 1; i < steps.length; i++) {
+        if (isVisible(steps[i])) { steps[i].scrollIntoView({behavior:"smooth"}); break; }
+      }
+    });
+  });
+
+  $("repairs_needed")   && $("repairs_needed").addEventListener('change', () => { revealChain(); });
+  $("repairs_cost_est") && $("repairs_cost_est").addEventListener('input',  () => { revealChain(); });
+  $("worth_estimate")   && $("worth_estimate").addEventListener('input',    () => { revealChain(); });
+
+  behindSel && behindSel.addEventListener('change', () => { toggleBehind(); revealChain(); });
+  hearSel   && hearSel.addEventListener('change', () => { toggleHearOther(); revealChain(); });
+
+  // init
+  toggleBehind();
+  toggleHearOther();
+  revealChain();
+
+  // stash visible inputs in intake_payload on submit (optional)
+  form.addEventListener('submit', function(){
+    const data = {};
+    Array.from(form.elements).forEach(el => {
+      if (!el.name || el.type === 'hidden') return;
+      if (['SELECT','INPUT','TEXTAREA'].includes(el.tagName)) data[el.name] = el.value;
+    });
+    const intake = $("intake_payload");
+    if (intake) intake.value = JSON.stringify(data);
+  });
+})();
+</script>
+{% endblock %}

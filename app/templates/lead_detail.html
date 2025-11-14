@@ -1,8 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
-<h2 class="mb-2">
-  Lead: {{ (lead.seller_first_name or '') ~ ' ' ~ (lead.seller_last_name or '') | trim }}
-</h2>
+
 
 {# templates/lead_detail.html snippet #}
 <h5 class="mt-4">Offers</h5>
@@ -47,37 +45,7 @@
 
 
 
-<div class="card mb-4">
-  <div class="card-body">
-    <div class="row g-3 align-items-center">
-      <div class="col-md-4">
-        <div class="fw-semibold text-uppercase small text-muted">Phone</div>
-        {% set normalized = (lead.phone or '') | replace(' ', '') | replace('(', '') | replace(')', '') | replace('-', '') %}
-        {% if lead.phone %}
-          <a href="tel:{{ normalized }}">{{ lead.phone }}</a>
-        {% else %}
-          <span class="text-muted">—</span>
-        {% endif %}
-      </div>
-      <div class="col-md-4">
-        <div class="fw-semibold text-uppercase small text-muted">Email</div>
-        {% if lead.email %}
-          <a href="mailto:{{ lead.email }}">{{ lead.email }}</a>
-        {% else %}
-          <span class="text-muted">—</span>
-        {% endif %}
-      </div>
-      <div class="col-md-4">
-        <div class="fw-semibold text-uppercase small text-muted">Property</div>
-        {% if prop %}
-          <a href="{{ url_for('main.property_detail', property_id=prop.id) }}">{{ lead.address }}</a>
-        {% else %}
-          {{ lead.address or '—' }}
-        {% endif %}
-      </div>
-    </div>
-  </div>
-</div>
+
 
 <div class="row g-4">
   <!-- Step 1 -->
@@ -86,11 +54,35 @@
       <div class="card-header">Step 1 — Seller & Address</div>
       <div class="card-body">
         <dl class="row mb-0">
-          <dt class="col-5">First name</dt><dd class="col-7">{{ lead.seller_first_name or '—' }}</dd>
-          <dt class="col-5">Last name</dt><dd class="col-7">{{ lead.seller_last_name or '—' }}</dd>
-          <dt class="col-5">Email</dt><dd class="col-7">{{ lead.email or '—' }}</dd>
-          <dt class="col-5">Phone</dt><dd class="col-7">{{ lead.phone or '—' }}</dd>
-          <dt class="col-5">Address</dt><dd class="col-7">{{ lead.address or '—' }}</dd>
+          <dt class="col-5">First name:</dt><dd class="col-7">{{ lead.seller_first_name or '—' }}</dd>
+          <dt class="col-5">Last name:</dt><dd class="col-7">{{ lead.seller_last_name or '—' }}</dd>
+
+          <dt class="col-5">Email:</dt>
+          <dd class="col-7">
+              {% if lead.email %}
+                <a href="mailto:{{ lead.email }}">{{ lead.email }}</a>
+              {% else %}—{% endif %}
+            </dd>  
+
+          <dt class="col-5">Phone:</dt><dd class="col-7">
+              {% if lead.phone %}
+                <a href="tel:{{ lead.phone }}">{{ lead.phone }}</a>
+              {% else %}—{% endif %}
+            </dd>
+
+          <dt class="col-5">Address</dt>
+          <dd class="col-7">
+              {% if prop %}
+                <a href="{{ url_for('main.property_detail', property_id=prop.id) }}">
+                  {{ prop.full_address or lead.address }}
+                </a>
+              {% else %}
+                {{ lead.address or '—' }}
+                {% if lead.address %}
+                  <a class="ms-2 small" href="{{ url_for('main.properties_list', q=lead.address) }}">(find/create)</a>
+                {% endif %}
+              {% endif %}
+            </dd>          
         </dl>
       </div>
     </div>
