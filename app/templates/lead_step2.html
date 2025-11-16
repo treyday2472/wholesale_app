@@ -12,6 +12,12 @@
   </div>
 
   <div class="mb-3">
+    {{ form.timeline.label(class="form-label") }} <span class="text-danger">*</span>
+    {{ form.timeline(class="form-select", id="timeline") }}
+    {% for err in form.property_type.errors %}<div class="text-danger small">{{ err }}</div>{% endfor %}
+  </div>
+
+  <div class="mb-3">
     {{ form.property_type.label(class="form-label") }} <span class="text-danger">*</span>
     {{ form.property_type(class="form-select", id="property_type") }}
     {% for err in form.property_type.errors %}<div class="text-danger small">{{ err }}</div>{% endfor %}
@@ -22,6 +28,13 @@
     {{ form.occupancy_status(class="form-select", id="occupancy_status") }}
     {% for err in form.occupancy_status.errors %}<div class="text-danger small">{{ err }}</div>{% endfor %}
   </div>
+
+  <!-- 🔹 Only show when occupancy_status == 'rented' -->
+<div class="mb-3" id="rent_amount_block" style="display:none;">
+  {{ form.rent_amount.label(class="form-label") }}
+  {{ form.rent_amount(class="form-control", placeholder="$ Monthly rent collected from the tenant") }}
+  <div class="form-text">Monthly rent collected from the tenant.</div>
+</div>
 
   <div class="mb-3">
     {{ form.listed_with_realtor.label(class="form-label") }} <span class="text-danger">*</span>
@@ -34,6 +47,27 @@
     {{ form.list_price(class="form-control", placeholder="$ listing price") }}
   </div>
 
+  <script>
+(function(){
+  const sel = document.getElementById("listed_with_realtor");
+  const block = document.getElementById("list_price_block");
+  function toggle(){ block.style.display = sel && sel.value === "yes" ? "" : "none"; }
+  sel && sel.addEventListener("change", toggle);
+  toggle();
+})();
+
+(function(){
+  const sel = document.getElementById("occupancy_status");
+  const block = document.getElementById("rent_amount_block");
+  function toggle(){ block.style.display = (sel && sel.value === "rented") ? "" : "none"; }
+  sel && sel.addEventListener("change", toggle);
+  toggle();
+})();
+</script>
+
+
+
+</script>
   <div class="mb-3">
     {{ form.condition.label(class="form-label") }} <span class="text-danger">*</span>
     {{ form.condition(class="form-select", id="condition") }}
@@ -43,13 +77,3 @@
   <button class="btn btn-primary" type="submit">Continue</button>
 </form>
 {% endblock %}
-
-<script>
-(function(){
-  const sel = document.getElementById("listed_with_realtor");
-  const block = document.getElementById("list_price_block");
-  function toggle(){ block.style.display = (sel && sel.value === "yes") ? "" : "none"; }
-  sel && sel.addEventListener("change", toggle);
-  toggle();
-})();
-</script

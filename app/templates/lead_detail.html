@@ -99,14 +99,14 @@
           <dt class="col-6">1) Why do you want to sell?</dt>
           <dd class="col-6">{{ i.get('why_sell') or '—' }}</dd>
 
-          <dt class="col-6">2) Occupancy</dt>
+          <dt class="col-6">2) Property Type</dt>
+          <dd class="col-6">{{ i.get('property_type') or '—' }}</dd>
+
+          <dt class="col-6">3) Occupancy</dt>
           <dd class="col-6">{{ i.get('occupancy_status') or lead.occupancy_status or '—' }}</dd>
 
           {% if (i.get('occupancy_status') == 'rented') %}
             <dt class="col-6">Rent (monthly)</dt><dd class="col-6">{{ i.get('rent_amount') or '—' }}</dd>
-            <dt class="col-6">Is multifamily?</dt><dd class="col-6">{{ i.get('is_multifam') or '—' }}</dd>
-            <dt class="col-6">Units in building</dt><dd class="col-6">{{ i.get('units_count') or '—' }}</dd>
-            <dt class="col-6">Vacant units</dt><dd class="col-6">{{ i.get('vacant_units') or '—' }}</dd>
             {% set rents = i.get('unit_rents_json') %}
             {% if rents %}
               <dt class="col-6">Per-unit rents</dt>
@@ -118,26 +118,39 @@
             {% endif %}
           {% endif %}
 
-          <dt class="col-6">3) Listed with a realtor?</dt>
+          <dt class="col-6">4) Listed with a realtor?</dt>
           <dd class="col-6">{{ i.get('listed_with_realtor') or '—' }}</dd>
 
           {% if i.get('listed_with_realtor') == 'yes' %}
             <dt class="col-6">List price</dt><dd class="col-6">{{ i.get('list_price') or '—' }}</dd>
           {% endif %}
 
-          <dt class="col-6">4) Condition (1–10)</dt>
+          <dt class="col-6">5) Condition (1–10)</dt>
           <dd class="col-6">{{ lead.condition or i.get('condition') or '—' }}</dd>
+        </dl>
+      </div>
+    </div>
+  </div>
+</div>
 
-          <dt class="col-6">5) Repairs needed</dt>
+  <!-- Step 3 -->
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-header">Step 3 — Addtional questions</div>
+      <div class="card-body">
+        {% set i = intake or {} %}
+
+        <dl class="row mb-0">          
+          <dt class="col-6">6) Repairs needed</dt>
           <dd class="col-6">{{ i.get('repairs_needed') or '—' }}</dd>
 
-          <dt class="col-6">6) Repair cost estimate</dt>
+          <dt class="col-6">7) Repair cost estimate</dt>
           <dd class="col-6">{{ i.get('repairs_cost_est') or '—' }}</dd>
 
-          <dt class="col-6">6) What’s it worth?</dt>
+          <dt class="col-6">8) What’s it worth?</dt>
           <dd class="col-6">{{ i.get('worth_estimate') or '—' }}</dd>
 
-          <dt class="col-6">7) Behind on payments?</dt>
+          <dt class="col-6">9) Behind on payments?</dt>
           <dd class="col-6">{{ i.get('behind_on_payments') or '—' }}</dd>
 
           {% if i.get('behind_on_payments') == 'yes' %}
@@ -147,28 +160,42 @@
             <dt class="col-6">Interest rate</dt><dd class="col-6">{{ i.get('interest_rate') or '—' }}</dd>
           {% endif %}
 
-          <dt class="col-6">9) Sell for amount owed?</dt>
+          <dt class="col-6">10) Sell for amount owed?</dt>
           <dd class="col-6">{{ i.get('will_sell_for_amount_owed') or '—' }}</dd>
 
-          <dt class="col-6">10) In bankruptcy?</dt>
+          {% if i.get('will_sell_for_amount_owed') == 'yes' %}
+            <dt class="col-6">10a) How much do you owe?</dt>
+            <dd class="col-6">{{ i.get('how_much_owed') or '—' }}</dd>
+          {% endif %}
+
+          <dt class="col-6">11) In bankruptcy?</dt>
           <dd class="col-6">{{ i.get('in_bankruptcy') or '—' }}</dd>
 
-          <dt class="col-6">11) Lowest amount accepted</dt>
+          <dt class="col-6">12) Lowest amount accepted</dt>
           <dd class="col-6">{{ i.get('lowest_amount') or '—' }}</dd>
 
-          <dt class="col-6">12) Flexible on price?</dt>
+          <dt class="col-6">13) Flexible on price?</dt>
           <dd class="col-6">{{ i.get('flexible_price') or '—' }}</dd>
 
-          <dt class="col-6">13) Interested in seller financing?</dt>
+          <dt class="col-6">14) Interested in seller financing?</dt>
           <dd class="col-6">{{ i.get('seller_finance_interest') or '—' }}</dd>
 
-          <dt class="col-6">14) Who else is on title?</dt>
+          <dt class="col-6">15) Anyone else on title?</dt>
           <dd class="col-6">{{ i.get('title_others') or '—' }}</dd>
+
+          {% if i.get('title_others') == 'yes' %}
+            <dt class="col-6">15a) Who is on title?</dt>
+            <dd class="col-6">{{ i.get('title_others_names') or '—' }}</dd>
+          {% endif %}
 
           <dt class="col-6">Are they willing to sell?</dt>
           <dd class="col-6">{{ i.get('title_others_willing') or '—' }}</dd>
 
-          <dt class="col-6">15) How did you hear about us?</dt>
+
+          <dt class="col-6">Are they willing to sell?</dt>
+          <dd class="col-6">{{ i.get('title_others_willing') or '—' }}</dd>
+
+          <dt class="col-6">16) How did you hear about us?</dt>
           <dd class="col-6">
             {{ i.get('how_hear_about_us') or '—' }}
             {% if i.get('how_hear_about_us') == 'other' and i.get('how_hear_other') %}

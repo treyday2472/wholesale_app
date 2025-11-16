@@ -5,235 +5,342 @@
 <form method="POST" enctype="multipart/form-data" id="LeadStep3MoreForm" novalidate>
   {{ form.hidden_tag() }}
 
-  <!-- ===== Q5 onward (progressively revealed) ===== -->
-
-  <!-- 5 -->
-  <div class="mb-3">
+  <!-- 6) Repairs needed (always visible) -->
+  <div class="mb-3" id="q6">
     {{ form.repairs_needed.label(class="form-label") }}
     {{ form.repairs_needed(class="form-select", id="repairs_needed") }}
-    <div class="form-text">Pick the best fit; explain next.</div>
-    <a href="#" class="small text-muted skip" data-target="q5">Skip this</a>
+    <div class="form-text">Pick the best fit; the next question is about cost.</div>
+    <a href="#" class="small text-muted skip" data-target="q6">Skip this</a>
   </div>
 
-  <!-- 6a -->
-  <div class="mb-3" id="q6a" style="display:none;">
-    {{ form.repairs_cost_est.label(class="form-label") }}
-    {{ form.repairs_cost_est(class="form-control", placeholder="$ and a short reason") }}
-    <a href="#" class="small text-muted skip" data-target="q6a">Skip this</a>
-  </div>
-
-  <!-- 6b -->
-  <div class="mb-3" id="q6b" style="display:none;">
-    {{ form.worth_estimate.label(class="form-label") }}
-    {{ form.worth_estimate(class="form-control", placeholder="$ your estimate") }}
-    <a href="#" class="small text-muted skip" data-target="q6b">Skip this</a>
-  </div>
-
-  <!-- 7 -->
+  <!-- 7) Slider for repair cost -->
   <div class="mb-3" id="q7" style="display:none;">
+    <label class="form-label">{{ form.repairs_cost_est.label.text }}</label>
+
+    <input
+      type="range"
+      class="form-range"
+      id="repairs_cost_est"
+      name="repairs_cost_est"
+      min="0"
+      max="100000"
+      step="5000"
+      value="{{ form.repairs_cost_est.data or 0 }}"
+      oninput="updateRepairSlider(this.value)"
+    >
+
+    <div class="mt-2">
+      <strong>Selected:</strong> <span id="repairsSliderValue">
+        ${{ '{:,}'.format(form.repairs_cost_est.data or 0) }}
+      </span>
+    </div>
+
+    <a href="#" class="small text-muted skip" data-target="q7">Skip this</a>
+  </div>
+
+  <!-- 8) Worth estimate -->
+  <div class="mb-3" id="q8" style="display:none;">
+    {{ form.worth_estimate.label(class="form-label") }}
+    {{ form.worth_estimate(class="form-control", id="worth_estimate", placeholder="$ your estimate") }}
+    <a href="#" class="small text-muted skip" data-target="q8">Skip this</a>
+  </div>
+
+  <!-- 9) Behind on payments? -->
+  <div class="mb-3" id="q9" style="display:none;">
     {{ form.behind_on_payments.label(class="form-label") }}
     {{ form.behind_on_payments(class="form-select", id="behind_on_payments") }}
+    <a href="#" class="small text-muted skip" data-target="q9">Skip this</a>
   </div>
 
-  <!-- 8a–8d (only when 7=yes) -->
-  <div id="q8" style="display:none;">
+  <!-- 9a–d) Behind details (only if behind_on_payments == yes) -->
+  <div id="q9_details" style="display:none;">
     <div class="row">
       <div class="col-md-6 mb-3">
         {{ form.behind_amount.label(class="form-label") }}
-        {{ form.behind_amount(class="form-control") }}
+        {{ form.behind_amount(class="form-control", id="behind_amount") }}
       </div>
       <div class="col-md-6 mb-3">
         {{ form.loan_balance.label(class="form-label") }}
-        {{ form.loan_balance(class="form-control") }}
+        {{ form.loan_balance(class="form-control", id="loan_balance") }}
       </div>
     </div>
     <div class="row">
       <div class="col-md-6 mb-3">
         {{ form.monthly_payment.label(class="form-label") }}
-        {{ form.monthly_payment(class="form-control") }}
+        {{ form.monthly_payment(class="form-control", id="monthly_payment") }}
       </div>
       <div class="col-md-6 mb-3">
         {{ form.interest_rate.label(class="form-label") }}
-        {{ form.interest_rate(class="form-control", placeholder="%") }}
+        {{ form.interest_rate(class="form-control", id="interest_rate", placeholder="%") }}
       </div>
     </div>
-    <a href="#" class="small text-muted skip" data-target="q8">Skip this</a>
   </div>
 
-  <!-- 9 -->
-  <div class="mb-3" id="q9" style="display:none;">
-    {{ form.will_sell_for_amount_owed.label(class="form-label") }}
-    {{ form.will_sell_for_amount_owed(class="form-select") }}
-    <a href="#" class="small text-muted skip" data-target="q9">Skip this</a>
-  </div>
-
-  <!-- 10 -->
+  <!-- 10) Will sell for amount owed? -->
   <div class="mb-3" id="q10" style="display:none;">
-    {{ form.in_bankruptcy.label(class="form-label") }}
-    {{ form.in_bankruptcy(class="form-select") }}
+    {{ form.will_sell_for_amount_owed.label(class="form-label") }}
+    {{ form.will_sell_for_amount_owed(class="form-select", id="will_sell_for_amount_owed") }}
     <a href="#" class="small text-muted skip" data-target="q10">Skip this</a>
   </div>
 
-  <!-- 11 -->
+  <!-- 10a) How much do you owe? (only if will_sell_for_amount_owed == yes) -->
+  <div class="mb-3" id="q10a" style="display:none;">
+    {{ form.how_much_owed.label(class="form-label") }}
+    {{ form.how_much_owed(class="form-control", id="how_much_owed", placeholder="$ amount owed") }}
+  </div>  
+
+  <!-- 11) Bankruptcy -->
   <div class="mb-3" id="q11" style="display:none;">
-    {{ form.lowest_amount.label(class="form-label") }}
-    {{ form.lowest_amount(class="form-control", placeholder="$") }}
+    {{ form.in_bankruptcy.label(class="form-label") }}
+    {{ form.in_bankruptcy(class="form-select", id="in_bankruptcy") }}
     <a href="#" class="small text-muted skip" data-target="q11">Skip this</a>
   </div>
 
-  <!-- 12 -->
+  <!-- 12) Lowest amount -->
   <div class="mb-3" id="q12" style="display:none;">
-    {{ form.flexible_price.label(class="form-label") }}
-    {{ form.flexible_price(class="form-select") }}
+    {{ form.lowest_amount.label(class="form-label") }}
+    {{ form.lowest_amount(class="form-control", id="lowest_amount", placeholder="$") }}
     <a href="#" class="small text-muted skip" data-target="q12">Skip this</a>
   </div>
 
-  <!-- 13 -->
+  <!-- 13) Flexible price -->
   <div class="mb-3" id="q13" style="display:none;">
-    <label class="form-label">
-      13) Would you be interested in
-      <a href="{{ url_for('main.learn_seller_financing') }}" target="_blank">seller financing</a>?
-    </label>
-    {{ form.seller_finance_interest(class="form-select") }}
+    {{ form.flexible_price.label(class="form-label") }}
+    {{ form.flexible_price(class="form-select", id="flexible_price") }}
     <a href="#" class="small text-muted skip" data-target="q13">Skip this</a>
   </div>
 
-  <!-- 14 -->
-  <div class="row" id="q14" style="display:none;">
-    <div class="col-md-8 mb-3">
-      {{ form.title_others.label(class="form-label") }}
-      {{ form.title_others(class="form-control", placeholder="Spouse, sibling, etc.") }}
-    </div>
-    <div class="col-md-4 mb-3">
-      {{ form.title_others_willing.label(class="form-label") }}
-      {{ form.title_others_willing(class="form-select") }}
-    </div>
-    <div class="mb-2">
-      <a href="#" class="small text-muted skip" data-target="q14">Skip this</a>
-    </div>
+  <!-- 14) Seller finance -->
+  <div class="mb-3" id="q14" style="display:none;">
+    <label class="form-label">
+      14) Would you be interested in
+      <a href="{{ url_for('main.learn_seller_financing') }}" target="_blank">seller financing</a>?
+    </label>
+    {{ form.seller_finance_interest(class="form-select", id="seller_finance_interest") }}
+    <a href="#" class="small text-muted skip" data-target="q14">Skip this</a>
   </div>
 
-  <!-- 15 -->
-  <div class="mb-3" id="q15" style="display:none;">
+  <!-- 15) Title others -->
+  <div id="q15" style="display:none;">
+    <div class="row">
+      <div class="col-md-6 mb-3">
+        {{ form.title_others.label(class="form-label") }}
+        {{ form.title_others(class="form-select", id="title_others") }}
+      </div>
+
+      <div class="col-md-6 mb-3" id="q15_names" style="display:none;">
+        {{ form.title_others_names.label(class="form-label") }}
+        {{ form.title_others_names(class="form-control", id="title_others_names", placeholder="Spouse, sibling, parent, etc.") }}
+      </div>
+    </div>
+
+    <div class="row" id="q15_willing" style="display:none;">
+      <div class="col-md-12 mb-3">
+        {{ form.title_others_willing.label(class="form-label") }}
+        {{ form.title_others_willing(class="form-select", id="title_others_willing") }}
+      </div>
+    </div>
+
+    <a href="#" class="small text-muted skip" data-target="q15">Skip this</a>
+  </div>
+
+  <!-- 16) How did you hear -->
+  <div class="mb-3" id="q16" style="display:none;">
     {{ form.how_hear_about_us.label(class="form-label") }}
     {{ form.how_hear_about_us(class="form-select", id="how_hear_about_us") }}
     <div id="hearOtherBlock" style="display:none;" class="mt-2">
       {{ form.how_hear_other.label(class="form-label") }}
-      {{ form.how_hear_other(class="form-control") }}
+      {{ form.how_hear_other(class="form-control", id="how_hear_other") }}
     </div>
-    <a href="#" class="small text-muted skip" data-target="q15">Skip this</a>
+    <a href="#" class="small text-muted skip" data-target="q16">Skip this</a>
   </div>
 
-  <!-- Notes (after 15) -->
+  <!-- Notes -->
   <div class="mb-3" id="q_notes" style="display:none;">
     {{ form.notes.label(class="form-label") }}
-    {{ form.notes(class="form-control", rows=3) }}
+    {{ form.notes(class="form-control", rows=3, id="notes") }}
   </div>
 
-  <!-- Attachments (if present in forms.py) -->
+  <!-- Attachments -->
   {% if form.attachments %}
-    <div class="mb-3" id="q_attachments" style="display:none;">
-      {{ form.attachments.label(class="form-label") }}
-      {{ form.attachments(class="form-control", multiple=True,
-                          accept="image/*,video/*,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv,text/plain,application/vnd.openxmlformats-officedocument.presentationml.presentation,.zip") }}
-      <div class="form-text">Upload photos, videos, or docs (optional).</div>
-    </div>
+  <div class="mb-3" id="q_attachments" style="display:none;">
+    {{ form.attachments.label(class="form-label") }}
+    {{ form.attachments(class="form-control", multiple=True,
+                        accept="image/*,video/*,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv,text/plain,application/vnd.openxmlformats-officedocument.presentationml.presentation,.zip") }}
+    <div class="form-text">Upload photos, videos, or docs (optional).</div>
+  </div>
   {% endif %}
-
 
   {{ form.intake_payload(id="intake_payload") }}
 
-  <div>
+  <!-- Submit is ALWAYS visible -->
+  <div class="mt-3">
     {{ form.submit(class="btn btn-primary") }}
   </div>
 </form>
+
 <script>
+function updateRepairSlider(val){
+  document.getElementById("repairsSliderValue").innerText = 
+    "$" + Number(val).toLocaleString();
+}
+
 (function(){
   const $  = (id) => document.getElementById(id);
-  const show = (el, on) => { if (el) el.style.display = on ? "" : "none"; };
-  const val = (el) => (el && (el.value || "").trim()) || "";
-  const isVisible = (el) => !!(el && el.offsetParent !== null);
+  const show = (id, on) => {
+    const el = $(id);
+    if (el) el.style.display = on ? "" : "none";
+  };
+  const val = (id) => {
+    const el = $(id);
+    return (el && (el.value || "").trim()) || "";
+  };
 
-  const form   = $("leadStep3Form");
-  const behindSel = $("behind_on_payments");
-  const hearSel   = $("how_hear_about_us");
-
-  function toggleBehind(){ show($("q8"), val(behindSel) === "yes"); }
-  function toggleHearOther(){ show($("hearOtherBlock"), val(hearSel) === "other"); }
-
-  const steps = ["q5","q6a","q6b","q7","q8","q9","q10","q11","q12","q13","q14","q15","q_notes","q_photos","q_attachments","submitRow"]
-    .map(id => $(id)).filter(Boolean);
+  const form       = $("LeadStep3MoreForm");
+  const behindSel  = $("behind_on_payments");
+  const hearSel    = $("how_hear_about_us");
 
   const skipped = new Set();
 
-  function answeredBlock(id){
-    if (id === "q8") {
-      const any = Array.from($("q8").querySelectorAll("input,select,textarea"))
-        .some(inp => (inp.value||"").trim() !== "");
-      return skipped.has("q8") || any || val(behindSel) !== "yes";
-    }
-    return skipped.has(id);
-  }
-
   function revealChain(){
-    // Q5 is always visible
-    show($("q6a"), (val($("repairs_needed")) !== "" || skipped.has("q5")));
-    show($("q6b"), isVisible($("q6a")) && (val($("repairs_cost_est")) !== "" || skipped.has("q6a")));
-    show($("q7"),  isVisible($("q6b")) && (val($("worth_estimate")) !== "" || skipped.has("q6b")));
+    // Q7/Q8 chain
+    const sliderVal = val("repairs_cost_est");
+    show("q7", true);  // keep slider visible once JS runs
+    show("q8", (sliderVal !== "" && sliderVal !== "0") || skipped.has("q7"));
 
-    if (isVisible($("q7")) && val(behindSel) !== "") {
-      toggleBehind();
-      show($("q9"), (val(behindSel) === "yes") ? answeredBlock("q8") : true);
+    // Q9 visible if worth_estimate filled OR q8 skipped
+    const worthVal = val("worth_estimate");
+    show("q9", (worthVal !== "" || skipped.has("q8")));
+
+    // Behind details + Q10 based on behind_on_payments
+    const behindVal = val("behind_on_payments");
+    if (behindVal !== "") {
+      show("q9_details", behindVal === "yes");
+      show("q10", true);
     } else {
-      show($("q8"), false);
-      show($("q9"), false);
+      show("q9_details", false);
+      show("q10", false);
+      show("q10a", false);
     }
 
-    show($("q10"), isVisible($("q9"))  && (val($("will_sell_for_amount_owed")) !== "" || skipped.has("q9")));
-    show($("q11"), isVisible($("q10")) && (val($("in_bankruptcy")) !== "" || skipped.has("q10")));
-    show($("q12"), isVisible($("q11")) && (val($("lowest_amount")) !== "" || skipped.has("q11")));
-    show($("q13"), isVisible($("q12")) && (val($("flexible_price")) !== "" || skipped.has("q12")));
-    show($("q14"), isVisible($("q13")) && (val($("seller_finance_interest")) !== "" || skipped.has("q13")));
-    show($("q15"), isVisible($("q14")) && (val($("title_others")) !== "" || val($("title_others_willing")) !== "" || skipped.has("q14")));
+    // Q10a: only show "How much do you owe?" if seller will sell for amount owed
+    const sellAmt = val("will_sell_for_amount_owed");
+    if (sellAmt === "yes") {
+      show("q10a", true);
+    } else {
+      show("q10a", false);
+      const owedEl = $("how_much_owed");
+      if (owedEl) owedEl.value = "";
+    }
 
-    const q15ready = (val(hearSel) !== "" || skipped.has("q15"));
-    show($("q_notes"),      isVisible($("q15")) && q15ready);
-    show($("q_photos"),     isVisible($("q15")) && q15ready);
-    show($("q_attachments"),isVisible($("q15")) && q15ready);
-    show($("submitRow"),    isVisible($("q15")) && q15ready);
+    const owedVal = val("how_much_owed");
+
+    // Q11: show after Q10/Q10a is handled, or once answered/skipped
+    const inBk = val("in_bankruptcy");
+    const ready11 =
+      sellAmt !== "" ||
+      skipped.has("q10") ||
+      (sellAmt === "yes" && (owedVal !== "" || skipped.has("q10a")));
+    show("q11", ready11 || inBk !== "" || skipped.has("q11"));
+
+    // Q12 after Q11
+    const lowest = val("lowest_amount");
+    const showQ12 = inBk !== "" || skipped.has("q11");
+    show("q12", showQ12);
+
+    // Q13 after Q12 — THIS IS THE IMPORTANT FIX
+    const flex = val("flexible_price");
+    // show Q13 once lowest_amount is filled OR Q12 is skipped
+    const showQ13 = lowest !== "" || skipped.has("q12");
+    show("q13", showQ13 || flex !== "" || skipped.has("q13"));
+
+    // Q14 after Q13
+    const sfi = val("seller_finance_interest");
+    const showQ14 = (flex !== "" || skipped.has("q13"));
+    show("q14", showQ14 || sfi !== "" || skipped.has("q14"));
+
+    // Q15 after Q14
+    let ready15 = false;
+    const titleOthers = val("title_others");
+
+    if (sfi !== "" || skipped.has("q14") || skipped.has("q15")) {
+      // we've "reached" Q15
+      ready15 = true;
+      show("q15", true);
+
+      if (titleOthers === "yes") {
+        show("q15_names", true);
+        show("q15_willing", true);
+      } else if (titleOthers === "no" || skipped.has("q15")) {
+        show("q15_names", false);
+        show("q15_willing", false);
+      } else {
+        // not answered yet
+        show("q15_names", false);
+        show("q15_willing", false);
+      }
+    } else {
+      // haven't reached Q15 yet
+      show("q15", false);
+      show("q15_names", false);
+      show("q15_willing", false);
+    }
+
+    // Q16 after Q15
+    const hearVal = val("how_hear_about_us");
+    const ready16 = (hearVal !== "" || skipped.has("q16") || ready15);
+    show("q16", ready15);
+
+    // Notes + attachments after 16
+    show("q_notes",      ready16);
+    show("q_attachments",ready16);
   }
 
+  // Skip links
   document.querySelectorAll('.skip').forEach(a => {
     a.addEventListener('click', (e) => {
       e.preventDefault();
       const t = a.getAttribute('data-target');
-      if (t) skipped.add(t);
-      revealChain();
-      const idx = steps.findIndex(el => el && el.id === t);
-      for (let i = idx + 1; i < steps.length; i++) {
-        if (isVisible(steps[i])) { steps[i].scrollIntoView({behavior:"smooth"}); break; }
+      if (t) {
+        skipped.add(t);
+        revealChain();
       }
     });
   });
 
-  $("repairs_needed")   && $("repairs_needed").addEventListener('change', () => { revealChain(); });
-  $("repairs_cost_est") && $("repairs_cost_est").addEventListener('input',  () => { revealChain(); });
-  $("worth_estimate")   && $("worth_estimate").addEventListener('input',    () => { revealChain(); });
+  // Event bindings
+  $("repairs_needed")        && $("repairs_needed").addEventListener('input',  revealChain);
+  $("repairs_cost_est")      && $("repairs_cost_est").addEventListener('input',  revealChain);
+  $("worth_estimate")        && $("worth_estimate").addEventListener('input',    revealChain);
+  behindSel                  && behindSel.addEventListener('change',            revealChain);
+  $("will_sell_for_amount_owed") &&
+    $("will_sell_for_amount_owed").addEventListener('change', revealChain);
+  $("how_much_owed")         && $("how_much_owed").addEventListener('input', revealChain);
+  $("in_bankruptcy")         && $("in_bankruptcy").addEventListener('change',   revealChain);
+  $("lowest_amount")         && $("lowest_amount").addEventListener('input',    revealChain);
+  $("flexible_price")        && $("flexible_price").addEventListener('change',  revealChain);
+  $("seller_finance_interest") &&
+    $("seller_finance_interest").addEventListener('change', revealChain);
+  $("title_others")          && $("title_others").addEventListener('change',     revealChain);
+  $("title_others_names")    && $("title_others_names").addEventListener("input", revealChain);
+  $("title_others_willing")  && $("title_others_willing").addEventListener('change', revealChain);
+  hearSel                    && hearSel.addEventListener('change', () => {
+    const block = $("hearOtherBlock");
+    if (block) block.style.display = hearSel.value === "other" ? "" : "none";
+    revealChain();
+  });
 
-  behindSel && behindSel.addEventListener('change', () => { toggleBehind(); revealChain(); });
-  hearSel   && hearSel.addEventListener('change', () => { toggleHearOther(); revealChain(); });
-
-  // init
-  toggleBehind();
-  toggleHearOther();
+  // Initial run
   revealChain();
 
-  // stash visible inputs in intake_payload on submit (optional)
-  form.addEventListener('submit', function(){
+  // stash answers into intake_payload on submit
+  form && form.addEventListener('submit', function(){
     const data = {};
     Array.from(form.elements).forEach(el => {
       if (!el.name || el.type === 'hidden') return;
-      if (['SELECT','INPUT','TEXTAREA'].includes(el.tagName)) data[el.name] = el.value;
+      if (['SELECT','INPUT','TEXTAREA'].includes(el.tagName)) {
+        data[el.name] = el.value;
+      }
     });
     const intake = $("intake_payload");
     if (intake) intake.value = JSON.stringify(data);

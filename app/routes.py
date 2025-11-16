@@ -132,121 +132,152 @@ def home():
 def lead_new_step1():
     form = LeadStep1Form()
     if form.validate_on_submit():
-        session['lead_step1'] = {
-            'seller_first_name': (form.seller_first_name.data or '').strip(),
-            'seller_last_name':  (form.seller_last_name.data  or '').strip(),
-            'email':             (form.email.data            or '').strip(),
-            'phone':             (form.phone.data            or '').strip(),
-            'address':           (form.address.data          or '').strip(),
-            'full_address':      form.full_address.data or (form.address.data or '').strip(),
-            'lat':               form.lat.data or None,
-            'lng':               form.lng.data or None,
-        }
 
+        # 1) Create the Property stub from the Step 1 address
+        address = (form.address.data or "").strip()
+        full_address = address  # tweak if you have city/state/zip fields
+
+        prop = Property(
+            address=address,
+            full_address =full_address,
+            source ="LeadStep1Form"
+        )
+        db.session.add(prop)
+        db.session.flush()
+
+        lead = Lead(
+            seller_first_name=(form.seller_first_name.data or "").strip() or None,
+            seller_last_name=(form.seller_last_name.data or "").strip() or None,
+            phone=(form.phone.data or "").strip() or None,
+            email=(form.email.data or "").strip() or None,
+            address=address,
+            lead_source="Web Form",
+            property=prop,  # this sets lead.property_id via relationship
+        )
+
+        db.session.add(lead)
+        db.session.commit()
         
-        return redirect(url_for('main.lead_new_step2'))
+        # Pull quick Zillow-style basics on creation (no Melissa credit)
+        try:
+            basics = zillow_basics(prop.full_address or prop.address)
+            if basics:
+                prop.beds = basics.get("beds") or prop.beds
+                prop.baths = basics.get("baths") or prop.baths
+                prop.sqft = basics.get("sqft") or prop.sqft
+                prop.year_built = basics.get("year_built") or prop.year_built
+
+                raw = {}
+                try:
+                    raw = json.loads(prop.raw_json) if prop.raw_json else {}
+                except Exception:
+                    raw = {}
+                raw["zillow"] = basics
+                prop.raw_json = json.dumps(raw)
+                db.session.commit()
+        except Exception as e:
+            current_app.logger.exception(f"Zillow basics failed: {e}")
+        
+        return redirect(url_for('main.lead_new_step2', lead_id=lead.id))
     return render_template(
         'lead_step1.html',
         form=form,
         GOOGLE_MAPS_API_KEY=current_app.config.get('GOOGLE_MAPS_API_KEY', '')
+        
     )
 
 
 
 
 # ---------------- Step 2 (CORE ONLY: 5 fields) ----------------
-@main.route('/lead/new/step2', methods=['GET', 'POST'])
-def lead_new_step2():
-    step1 = session.get('lead_step1')
-    if not step1:
-        flash("Please complete Step 1 first.", "warning")
-        return redirect(url_for('main.lead_new_step1'))
-
-    form = LeadStep2CoreForm()
+@main.route("/leads/new/step2/<int:lead_id>", methods=["GET", "POST"])
+def lead_new_step2(lead_id):
+    lead = Lead.query.get_or_404(lead_id)
+    form = LeadStep2CoreForm(obj=lead)  # prefill from lead where it overlaps
 
     if form.validate_on_submit():
-        # Required fields only (your form should enforce required)
-        cond_value = form.condition.data
+        # Save core motivation / numbers
+        lead.condition          = form.condition.data
+        lead.why_sell           = form.why_sell.data
+        lead.timeline          = form.timeline.data
+        lead.occupancy_status   = form.occupancy_status.data
+        lead.listed_with_realtor = form.listed_with_realtor.data
+        lead.property_type      = form.property_type.data
+        # you can keep updating lead_source here or only Step1, your call
+        if hasattr(form, "lead_source"):
+            lead.lead_source = form.lead_source.data or lead.lead_source
 
-        lead = Lead(
-            # from Step 1
-            seller_first_name = step1.get('seller_first_name') or None,
-            seller_last_name  = step1.get('seller_last_name') or None,
-            email             = step1.get('email') or None,
-            phone             = step1.get('phone') or None,
-            address           = step1.get('address') or None,
+        # Merge Step 2 answers into intake JSON
+        intake = lead.intake or {}
+        if not isinstance(intake, dict):
+            intake = {}
 
-            # Step 2 — real columns you already have
-            why_sell         = (form.why_sell.data or '').strip() or None,
-            property_type    = form.property_type.data or None,
-            occupancy_status = form.occupancy_status.data or None,
-            condition        = int(cond_value) if cond_value else None,
+        intake.update({
+            "condition": lead.condition,
+            "why_sell": lead.why_sell,
+            "timeline": lead.timeline,
+            "asking_price": lead.asking_price,
+            "occupancy_status": lead.occupancy_status,
+            "listed_with_realtor": lead.listed_with_realtor,
+            "property_type": lead.property_type,
+        })
+        lead.intake = intake
 
-            lead_source = "Web Form",)
-
-        intake = {
-            "listed_with_realtor": form.listed_with_realtor.data or "",
-                }
-        if (form.listed_with_realtor.data or "") == "yes":
-            intake["list_price"] = (form.list_price.data or "").strip()
-
-        lead.intake = json.dumps(intake)
-            
-
-        db.session.add(lead)
         db.session.commit()
+        return redirect(url_for("main.lead_new_step3", lead_id=lead.id))
 
-        # clear Step 1 session and go to Step 3
-        session.pop('lead_step1', None)
-        return redirect(url_for('main.lead_new_step3', lead_id=lead.id))
-
-    return render_template('lead_step2.html', form=form)
+    return render_template("lead_step2.html", form=form, lead=lead)
 
 
 # ---------------- Step 3 (MORE: rest of fields + uploads) ----------------
-@main.route("/leads/new/step3/<int:lead_id>", methods=["GET","POST"])
+@main.route("/leads/new/step3/<int:lead_id>", methods=["GET", "POST"])
 def lead_new_step3(lead_id):
     lead = Lead.query.get_or_404(lead_id)
-    form = LeadStep3MoreForm(obj=lead)
+    form = LeadStep3MoreForm()
 
-    if request.method == "POST" and form.validate():
+    if form.validate_on_submit():
         # ---- save the rest of the fields (everything beyond the core 5) ----
-        # Examples (adjust to your model):
-        lead.repairs_needed        = form.repairs_needed.data or None
-        lead.repairs_cost_est      = form.repairs_cost_est.data or None
-        lead.worth_estimate        = form.worth_estimate.data or None
-        lead.behind_on_payments    = form.behind_on_payments.data or None
-        lead.behind_amount         = form.behind_amount.data or None
-        lead.loan_balance          = form.loan_balance.data or None
-        lead.monthly_payment       = form.monthly_payment.data or None
-        lead.interest_rate         = form.interest_rate.data or None
+        lead.repairs_needed           = form.repairs_needed.data or None
+        lead.repairs_cost_est         = form.repairs_cost_est.data or None
+        lead.worth_estimate           = form.worth_estimate.data or None
+
+        lead.behind_on_payments       = form.behind_on_payments.data or None
+        lead.behind_amount            = form.behind_amount.data or None
+        lead.loan_balance             = form.loan_balance.data or None
+        lead.monthly_payment          = form.monthly_payment.data or None
+        lead.interest_rate            = form.interest_rate.data or None
+
         lead.will_sell_for_amount_owed = form.will_sell_for_amount_owed.data or None
-        lead.in_bankruptcy         = form.in_bankruptcy.data or None
-        lead.lowest_amount         = form.lowest_amount.data or None
-        lead.flexible_price        = form.flexible_price.data or None
-        lead.seller_finance_interest = form.seller_finance_interest.data or None
-        lead.title_others          = (form.title_others.data or '').strip() or None
-        lead.title_others_willing  = form.title_others_willing.data or None
-        lead.how_hear_about_us     = form.how_hear_about_us.data or None
-        lead.how_hear_other        = (form.how_hear_other.data or '').strip() or None
-        lead.notes                 = (form.notes.data or '').strip() or None
+        lead.how_much_owed             = form.how_much_owed.data or None
+
+        lead.in_bankruptcy            = form.in_bankruptcy.data or None
+        lead.lowest_amount            = form.lowest_amount.data or None
+        lead.flexible_price           = form.flexible_price.data or None
+        lead.seller_finance_interest  = form.seller_finance_interest.data or None
+
+        lead.title_others             = (form.title_others.data or "").strip() or None
+        lead.title_others_names       = (form.title_others_names.data or "").strip() or None
+        lead.title_others_willing     = form.title_others_willing.data or None
+        lead.how_hear_about_us        = form.how_hear_about_us.data or None
+        lead.how_hear_other           = (form.how_hear_other.data or "").strip() or None
+        lead.notes                    = (form.notes.data or "").strip() or None
 
         # ---- file uploads (photos/attachments) ----
         upload_dir = current_app.config.get(
-            'UPLOAD_FOLDER',
-            os.path.join(current_app.static_folder, 'uploads')
+            "UPLOAD_FOLDER",
+            os.path.join(current_app.static_folder, "uploads")
         )
         os.makedirs(upload_dir, exist_ok=True)
         saved_files = []
 
         files = []
-        if 'attachments' in request.files:
-            files.extend(request.files.getlist('attachments'))
-        if 'photos' in request.files:
-            files.extend(request.files.getlist('photos'))
+        if "attachments" in request.files:
+            files.extend(request.files.getlist("attachments"))
+        if "photos" in request.files:
+            files.extend(request.files.getlist("photos"))
 
         for file in files:
-            if not file or not getattr(file, 'filename', ''):
+            if not file or not getattr(file, "filename", ""):
                 continue
             filename = secure_filename(file.filename)
             base, ext = os.path.splitext(filename)
@@ -259,26 +290,65 @@ def lead_new_step3(lead_id):
             saved_files.append(final)
 
         if saved_files:
-            lead.image_files = ",".join(filter(None, [(lead.image_files or ""), ",".join(saved_files)]))
+            lead.image_files = ",".join(
+                filter(None, [(lead.image_files or ""), ",".join(saved_files)])
+            )
 
-        
+        # ---- Merge Step 3 answers into intake JSON ----
+        raw_intake = lead.intake or {}
+        if isinstance(raw_intake, dict):
+            intake = dict(raw_intake)  # copy
+        elif isinstance(raw_intake, str):
+            try:
+                import json
+                intake = json.loads(raw_intake) or {}
+            except Exception:
+                intake = {}
+        else:
+            intake = {}
 
+        # helper to keep JSON-safe types
+        def safe_int(v):
+            return int(v) if v not in (None, "") else None
+
+        def safe_float(v):
+            return float(v) if v not in (None, "") else None
+
+        intake.update({
+            # step 3 repairs / value
+            "repairs_needed": lead.repairs_needed,
+            "repairs_cost_est": safe_int(form.repairs_cost_est.data),
+
+            "worth_estimate": lead.worth_estimate,
+
+            # step 3 financial distress
+            "behind_on_payments": lead.behind_on_payments,
+            "behind_amount": safe_int(form.behind_amount.data),
+            "loan_balance": safe_int(form.loan_balance.data),
+            "monthly_payment": safe_int(form.monthly_payment.data),
+            "interest_rate": lead.interest_rate,
+
+            # step 3 deal terms
+            "will_sell_for_amount_owed": lead.will_sell_for_amount_owed,
+            "how_much_owed": safe_float(form.how_much_owed.data),
+            "in_bankruptcy": lead.in_bankruptcy,
+            "lowest_amount": safe_int(form.lowest_amount.data),
+            "flexible_price": lead.flexible_price,
+            "seller_finance_interest": lead.seller_finance_interest,
+
+            # title & marketing
+            "title_others": lead.title_others,
+            "title_others_names": lead.title_others_names,
+            "title_others_willing": lead.title_others_willing,
+            "how_hear_about_us": lead.how_hear_about_us,
+            "how_hear_other": lead.how_hear_other,
+        })
+
+        lead.intake = intake
         db.session.commit()
-
-        # ---- auto-enrich + initial offers (AFTER step 3 save) ----
-        try:
-            result = auto_enrich_and_offer_for_lead(lead.id)
-            if result.get("ok"):
-                flash("Lead saved and initial offers generated.", "success")
-            else:
-                current_app.logger.warning("Auto-offer failed: %s", result.get("error"))
-                flash("Lead saved. Auto-offer enrich failed; you can create offers manually.", "warning")
-        except Exception as e:
-            current_app.logger.exception("auto_enrich_and_offer_for_lead threw: %s", e)
-            flash("Lead saved. Auto-offer failed; you can create offers manually.", "warning")
-
         return redirect(url_for("main.lead_detail", lead_id=lead.id))
 
+    # GET or failed validation
     return render_template("lead_step3.html", form=form, lead=lead)
 
 
@@ -307,28 +377,61 @@ def leads_list():
 @main.route('/leads/<int:lead_id>', methods=['GET', 'POST'])
 def lead_detail(lead_id):
     lead = Lead.query.get_or_404(lead_id)
+
+    # Prefill status form from lead
     form = UpdateStatusForm(lead_status=lead.lead_status)
 
-    intake = lead.intake or {}
-    if isinstance(intake, str):
+    # --- Normalize intake into a dict ---
+    raw_intake = lead.intake or {}
+    if isinstance(raw_intake, dict):
+        intake = raw_intake
+    elif isinstance(raw_intake, str):
         try:
-            intake = json.loads(intake)
+            import json
+            intake = json.loads(raw_intake) or {}
         except Exception:
             intake = {}
+    else:
+        intake = {}
 
-    prop = (Property.query
+    # --- Get linked property (relationship first, fallback by address) ---
+    prop = getattr(lead, "property", None)
+    if prop is None and lead.address:
+        prop = (
+            Property.query
             .filter_by(address=lead.address)
             .order_by(Property.id.desc())
-            .first())
+            .first()
+        )
 
+    # --- Handle status update POST ---
     if form.validate_on_submit():
         lead.lead_status = form.lead_status.data
         db.session.commit()
         flash("Lead status updated.", "success")
         return redirect(url_for('main.lead_detail', lead_id=lead.id))
 
-    images = lead.image_files.split(",") if lead.image_files else []
-    return render_template('lead_detail.html', lead=lead, form=form, images=images, intake=intake, prop=prop)
+    # --- Parse images list safely ---
+    if lead.image_files:
+        images = [f.strip() for f in lead.image_files.split(",") if f.strip()]
+    else:
+        images = []
+
+    # --- Render detail page ---
+    from flask import current_app  # if not already imported at top
+    SF_ENABLED = current_app.config.get("SF_ENABLED", False)
+    SF_INSTANCE_URL = current_app.config.get("SF_INSTANCE_URL", "")
+
+    return render_template(
+        'lead_detail.html',
+        lead=lead,
+        form=form,
+        images=images,
+        intake=intake,
+        prop=prop,
+        SF_ENABLED=SF_ENABLED,
+        SF_INSTANCE_URL=SF_INSTANCE_URL,
+    )
 
 @main.route('/leads/<int:lead_id>/delete', methods=['POST'])
 def delete_lead(lead_id):
