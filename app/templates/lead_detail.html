@@ -1,51 +1,54 @@
 {% extends "base.html" %}
 {% block content %}
 
+<h5 class="mt-4">Lead Details</h5>
 
-{# templates/lead_detail.html snippet #}
-<h5 class="mt-4">Offers</h5>
-{% if lead.offers %}
-  <ul class="list-group">
-    {% for o in lead.offers %}
-      <li class="list-group-item bg-dark text-light d-flex justify-content-between">
-        <span>
-          {{ "Initial" if o.initial_offer else "Offer" }} •
-          {{ o.created_at.strftime("%Y-%m-%d") }} •
-          {{ o.offer_status.value if o.offer_status else "—" }}
-        </span>
-        <span>{{ o.my_cash_offer|currency }}</span>
-      </li>
-    {% endfor %}
-  </ul>
-{% else %}
-  <div class="text-muted">No offers yet.</div>
-{% endif %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <span class="badge bg-secondary">{{ lead.lead_status or 'New Lead' }}</span>
+    <small class="text-muted ms-2">ID #{{ lead.id }}</small>
+  </div>
 
+  <div class="d-flex flex-wrap gap-2">
+    {% if prop %}
+      <a class="btn btn-outline-primary btn-sm"
+         href="{{ url_for('main.property_detail', property_id=prop.id) }}">
+        View Property
+      </a>
+    {% endif %}
 
-<div class="mb-3">
-  <span class="badge bg-secondary">{{ lead.lead_status or 'New Lead' }}</span>
-  <small class="text-muted ms-2">ID #{{ lead.id }}</small>
-</div>
-
-<div class="mb-3 d-flex gap-2">
-  {% if SF_ENABLED %}
-    {% if lead.sf_lead_id %}
-      <a class="btn btn-outline-secondary" target="_blank"
-         href="{{ SF_INSTANCE_URL }}/lightning/r/Lead/{{ lead.sf_lead_id }}/view">
-        Open in Salesforce
+    {% if lead.offers %}
+      <a class="btn btn-outline-warning btn-sm"
+         href="{{ url_for('offers.edit_offer', offer_id=lead.offers[-1].id) }}">
+        View Latest Offer
+      </a>
+      <a class="btn btn-outline-secondary btn-sm"
+         href="{{ url_for('offers.list_offers') }}">
+        View All Offers
       </a>
     {% else %}
-      <form method="POST" action="{{ url_for('main.export_lead_to_salesforce', lead_id=lead.id) }}">
-        <button class="btn btn-primary" type="submit">Export to Salesforce</button>
-      </form>
+      <a class="btn btn-primary btn-sm"
+         href="{{ url_for('offers.new_offer', lead_id=lead.id) }}">
+        Create First Offer
+      </a>
     {% endif %}
-  {% endif %}
+
+    {% if SF_ENABLED %}
+      {% if lead.sf_lead_id %}
+        <a class="btn btn-outline-secondary btn-sm" target="_blank"
+           href="{{ SF_INSTANCE_URL }}/lightning/r/Lead/{{ lead.sf_lead_id }}/view">
+          Open in Salesforce
+        </a>
+      {% else %}
+        <form method="POST"
+              action="{{ url_for('main.export_lead_to_salesforce', lead_id=lead.id) }}"
+              class="d-inline">
+          <button class="btn btn-primary btn-sm" type="submit">Export to Salesforce</button>
+        </form>
+      {% endif %}
+    {% endif %}
+  </div>
 </div>
-
-
-
-
-
 
 <div class="row g-4">
   <!-- Step 1 -->
@@ -54,35 +57,42 @@
       <div class="card-header">Step 1 — Seller & Address</div>
       <div class="card-body">
         <dl class="row mb-0">
-          <dt class="col-5">First name:</dt><dd class="col-7">{{ lead.seller_first_name or '—' }}</dd>
-          <dt class="col-5">Last name:</dt><dd class="col-7">{{ lead.seller_last_name or '—' }}</dd>
+          <dt class="col-5">First name:</dt>
+          <dd class="col-7">{{ lead.seller_first_name or '—' }}</dd>
+
+          <dt class="col-5">Last name:</dt>
+          <dd class="col-7">{{ lead.seller_last_name or '—' }}</dd>
 
           <dt class="col-5">Email:</dt>
           <dd class="col-7">
-              {% if lead.email %}
-                <a href="mailto:{{ lead.email }}">{{ lead.email }}</a>
-              {% else %}—{% endif %}
-            </dd>  
+            {% if lead.email %}
+              <a href="mailto:{{ lead.email }}">{{ lead.email }}</a>
+            {% else %}—{% endif %}
+          </dd>
 
-          <dt class="col-5">Phone:</dt><dd class="col-7">
-              {% if lead.phone %}
-                <a href="tel:{{ lead.phone }}">{{ lead.phone }}</a>
-              {% else %}—{% endif %}
-            </dd>
+          <dt class="col-5">Phone:</dt>
+          <dd class="col-7">
+            {% if lead.phone %}
+              <a href="tel:{{ lead.phone }}">{{ lead.phone }}</a>
+            {% else %}—{% endif %}
+          </dd>
 
           <dt class="col-5">Address</dt>
           <dd class="col-7">
-              {% if prop %}
-                <a href="{{ url_for('main.property_detail', property_id=prop.id) }}">
-                  {{ prop.full_address or lead.address }}
+            {% if prop %}
+              <a href="{{ url_for('main.property_detail', property_id=prop.id) }}">
+                {{ prop.full_address or lead.address }}
+              </a>
+            {% else %}
+              {{ lead.address or '—' }}
+              {% if lead.address %}
+                <a class="ms-2 small"
+                   href="{{ url_for('main.properties_list', q=lead.address) }}">
+                  (find/create)
                 </a>
-              {% else %}
-                {{ lead.address or '—' }}
-                {% if lead.address %}
-                  <a class="ms-2 small" href="{{ url_for('main.properties_list', q=lead.address) }}">(find/create)</a>
-                {% endif %}
               {% endif %}
-            </dd>          
+            {% endif %}
+          </dd>
         </dl>
       </div>
     </div>
@@ -94,7 +104,6 @@
       <div class="card-header">Step 2 — Intake (Q&A)</div>
       <div class="card-body">
         {% set i = intake or {} %}
-
         <dl class="row mb-0">
           <dt class="col-6">1) Why do you want to sell?</dt>
           <dd class="col-6">{{ i.get('why_sell') or '—' }}</dd>
@@ -105,14 +114,17 @@
           <dt class="col-6">3) Occupancy</dt>
           <dd class="col-6">{{ i.get('occupancy_status') or lead.occupancy_status or '—' }}</dd>
 
-          {% if (i.get('occupancy_status') == 'rented') %}
-            <dt class="col-6">Rent (monthly)</dt><dd class="col-6">{{ i.get('rent_amount') or '—' }}</dd>
+          {% if i.get('occupancy_status') == 'rented' %}
+            <dt class="col-6">Rent (monthly)</dt>
+            <dd class="col-6">{{ i.get('rent_amount') or '—' }}</dd>
             {% set rents = i.get('unit_rents_json') %}
             {% if rents %}
               <dt class="col-6">Per-unit rents</dt>
               <dd class="col-6">
                 {% set pretty = rents %}
-                {% if rents is string and rents.startswith('[') %}{% set pretty = rents[1:-1].replace('"','') %}{% endif %}
+                {% if rents is string and rents.startswith('[') %}
+                  {% set pretty = rents[1:-1].replace('"','') %}
+                {% endif %}
                 {{ pretty }}
               </dd>
             {% endif %}
@@ -122,7 +134,8 @@
           <dd class="col-6">{{ i.get('listed_with_realtor') or '—' }}</dd>
 
           {% if i.get('listed_with_realtor') == 'yes' %}
-            <dt class="col-6">List price</dt><dd class="col-6">{{ i.get('list_price') or '—' }}</dd>
+            <dt class="col-6">List price</dt>
+            <dd class="col-6">{{ i.get('list_price') or '—' }}</dd>
           {% endif %}
 
           <dt class="col-6">5) Condition (1–10)</dt>
@@ -131,16 +144,14 @@
       </div>
     </div>
   </div>
-</div>
 
   <!-- Step 3 -->
   <div class="col-lg-6">
     <div class="card h-100">
-      <div class="card-header">Step 3 — Addtional questions</div>
+      <div class="card-header">Step 3 — Additional Questions</div>
       <div class="card-body">
         {% set i = intake or {} %}
-
-        <dl class="row mb-0">          
+        <dl class="row mb-0">
           <dt class="col-6">6) Repairs needed</dt>
           <dd class="col-6">{{ i.get('repairs_needed') or '—' }}</dd>
 
@@ -154,10 +165,17 @@
           <dd class="col-6">{{ i.get('behind_on_payments') or '—' }}</dd>
 
           {% if i.get('behind_on_payments') == 'yes' %}
-            <dt class="col-6">Reinstatement / behind amount</dt><dd class="col-6">{{ i.get('behind_amount') or '—' }}</dd>
-            <dt class="col-6">Loan balance</dt><dd class="col-6">{{ i.get('loan_balance') or '—' }}</dd>
-            <dt class="col-6">Monthly payment</dt><dd class="col-6">{{ i.get('monthly_payment') or '—' }}</dd>
-            <dt class="col-6">Interest rate</dt><dd class="col-6">{{ i.get('interest_rate') or '—' }}</dd>
+            <dt class="col-6">Reinstatement / behind amount</dt>
+            <dd class="col-6">{{ i.get('behind_amount') or '—' }}</dd>
+
+            <dt class="col-6">Loan balance</dt>
+            <dd class="col-6">{{ i.get('loan_balance') or '—' }}</dd>
+
+            <dt class="col-6">Monthly payment</dt>
+            <dd class="col-6">{{ i.get('monthly_payment') or '—' }}</dd>
+
+            <dt class="col-6">Interest rate</dt>
+            <dd class="col-6">{{ i.get('interest_rate') or '—' }}</dd>
           {% endif %}
 
           <dt class="col-6">10) Sell for amount owed?</dt>
@@ -191,10 +209,6 @@
           <dt class="col-6">Are they willing to sell?</dt>
           <dd class="col-6">{{ i.get('title_others_willing') or '—' }}</dd>
 
-
-          <dt class="col-6">Are they willing to sell?</dt>
-          <dd class="col-6">{{ i.get('title_others_willing') or '—' }}</dd>
-
           <dt class="col-6">16) How did you hear about us?</dt>
           <dd class="col-6">
             {{ i.get('how_hear_about_us') or '—' }}
@@ -211,6 +225,38 @@
   </div>
 </div>
 
+<!-- Offers Card -->
+<div class="card mt-4">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span>Offers</span>
+    <div>
+      {% if lead.offers %}
+        <span class="small text-muted">Total: {{ lead.offers|length }}</span>
+      {% else %}
+        <span class="small text-muted">No offers yet.</span>
+      {% endif %}
+    </div>
+  </div>
+  <div class="card-body">
+    {% if lead.offers %}
+      <ul class="list-group">
+        {% for o in lead.offers %}
+          <li class="list-group-item bg-dark text-light d-flex justify-content-between">
+            <span>
+              {{ "Initial" if o.initial_offer else "Offer" }} •
+              {{ o.created_at.strftime("%Y-%m-%d") }} •
+              {{ o.offer_status.value if o.offer_status else "—" }}
+            </span>
+            <span>{{ o.my_cash_offer|currency }}</span>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <div class="text-muted">No offers yet.</div>
+    {% endif %}
+  </div>
+</div>
+
 {% if images and images|length %}
   <div class="card mt-4">
     <div class="card-header">Attachments</div>
@@ -219,7 +265,8 @@
         {% for img in images %}
           <div class="col-6 col-md-3">
             <a href="{{ url_for('static', filename='uploads/' ~ img) }}" target="_blank">
-              <img src="{{ url_for('static', filename='uploads/' ~ img) }}" class="img-fluid rounded" alt="file">
+              <img src="{{ url_for('static', filename='uploads/' ~ img) }}"
+                   class="img-fluid rounded" alt="file">
             </a>
           </div>
         {% endfor %}
@@ -227,4 +274,5 @@
     </div>
   </div>
 {% endif %}
+
 {% endblock %}

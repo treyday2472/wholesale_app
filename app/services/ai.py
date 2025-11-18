@@ -68,7 +68,6 @@ def _avm_anchor(avm: dict) -> tuple[Optional[float], list[str]]:
         v = _num(v)
         if v is not None:
             vals.append(v); used.append(label)
-    _add(avm.get("attom"),    "ATTOM")
     _add(avm.get("melissa"),  "Melissa")
     _add(avm.get("zestimate"),"Zestimate")
     if vals:
@@ -317,7 +316,7 @@ def suggest_arv(subject: Dict, comps: List[Dict], k: int = 6, avm: Optional[Dict
     system = (
         "You are a residential appraisal assistant. Estimate ARV from CLOSED SALE comps, "
         "prefer recent (≤6 mo), close (≤0.5mi), ±15% size, similar year/type, and real closed prices. "
-        "You are given a local comp-based baseline and optional AVMs (ATTOM/Melissa/Zestimate). "
+        "You are given a local comp-based baseline and optional AVMs (Melissa/Zestimate). "
         "Treat AVMs as a soft prior: if comps are thin or noisy, nudge toward the AVM anchor; "
         "otherwise, favor comps. Return ONLY minified JSON: "
         '{"arv":312000,"low":295000,"high":330000,"used":[0,3,5],'
@@ -328,7 +327,6 @@ def suggest_arv(subject: Dict, comps: List[Dict], k: int = 6, avm: Optional[Dict
         "subject": {k: subject.get(k) for k in ("address","beds","baths","sqft","yearBuilt")},
         "local_baseline": blended_pack,       # already blended toward AVMs
         "avms": {
-            "attom":   (avm or {}).get("attom"),
             "melissa": (avm or {}).get("melissa"),
             "zestimate":(avm or {}).get("zestimate"),
             "anchor": blended_pack.get("avm_anchor"),

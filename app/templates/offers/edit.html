@@ -23,9 +23,15 @@
     </div>
   </div>
   <div>
-    <a class="btn btn-outline-light" href="{{ url_for('offers.list_offers', lead_id=offer.lead_id) }}">Back to Offers</a>
+    {% if offer.lead_id %}
+      <a class="btn btn-outline-light"
+         href="{{ url_for('main.lead_detail', lead_id=offer.lead_id) }}">
+        Back to Lead
+      </a>
+    {% endif %}
   </div>
 </div>
+
 
 <div class="container my-4">
   <div class="d-flex justify-content-between align-items-center mb-3">

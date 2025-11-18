@@ -7,13 +7,14 @@ from flask import (
     request, flash, current_app, session, jsonify
 )
 
+from .helpers.lead_helpers import ensure_property_and_initial_offer
 
 from datetime import datetime
 from math import radians, sin, cos, asin, sqrt
 from .services.ai import suggest_arv
 
 
-from .services.attom import AttomError
+
 import re as regex
 
 from werkzeug.utils import secure_filename
@@ -59,6 +60,30 @@ def _log(raw: dict, *, source: str, event: str, status, note: str = None, meta: 
     })
 
 main = Blueprint('main', __name__)
+
+def _update_pipeline_for_motivation(prop: Property, motivation_score: int):
+    prop.motivation_score = motivation_score
+
+    # 1–4: cold or nurture-only
+    if motivation_score <= 4:
+        # keep evaluation_stage as-is, no MLS review
+        prop.needs_mls_review = False
+
+    # 5–6: warm, send preliminary offer (Stage 2)
+    elif 5 <= motivation_score <= 6:
+        # your logic should have already run Stage 2 ARV (Zillow + Melissa + public)
+        prop.evaluation_stage = max(prop.evaluation_stage or 1, 2)
+        prop.needs_mls_review = False
+        # here you'd also queue a “send soft offer” task for your comms AI
+
+    # 7–10: hot, needs real MLS comps
+    else:
+        prop.evaluation_stage = max(prop.evaluation_stage or 1, 2)  # ensure at least Stage 2 ran
+        prop.needs_mls_review = True
+
+    db.session.add(prop)
+    db.session.commit()
+
 
 
 
@@ -122,6 +147,38 @@ def eval_address():
 def allowed_file(filename: str) -> bool:
     ext = (filename.rsplit('.', 1)[1].lower() if '.' in filename else '')
     return ext in current_app.config['ALLOWED_IMAGE_EXTENSIONS']
+
+def select_comps_for_arv(prop, raw, comps_list, ai_comps):
+    """
+    Decide which comps to feed into suggest_arv().
+
+    Priority:
+      1) If evaluation_stage == 3 and MLS comps exist → use MLS comps.
+      2) Else if AI-selected comps exist → use ai_comps.
+      3) Else → fallback to the baseline comps_list (Zillow / default).
+    """
+    ev_stage = getattr(prop, "evaluation_stage", None) or 0
+
+    base_comps = comps_list or []
+    ai_list = ai_comps or []
+
+    # Future-proof: MLS comps will be stored on the raw blob
+    # under "mls_comps" (list of comp dicts/rows).
+    mls_list = []
+    if raw:
+        mls_list = raw.get("mls_comps") or []
+
+    # 1) If MLS review is done, prefer MLS comps
+    if ev_stage >= 3 and mls_list:
+        return mls_list
+
+    # 2) Otherwise, if we have AI-selected comps, use those
+    if ai_list:
+        return ai_list
+
+    # 3) Fallback to the base Zillow/default comps
+    return base_comps
+
 
 @main.route('/')
 def home():
@@ -345,6 +402,8 @@ def lead_new_step3(lead_id):
         })
 
         lead.intake = intake
+
+        offer = ensure_property_and_initial_offer
         db.session.commit()
         return redirect(url_for("main.lead_detail", lead_id=lead.id))
 
@@ -535,6 +594,20 @@ def properties_list():
         )
     props = query.order_by(Property.id.desc()).all()
     return render_template('properties_list.html', props=props, q=q,)
+
+@main.route("/properties/<int:property_id>/needs-mls-review", methods=["POST"])
+def mark_needs_mls_review(property_id):
+    prop = Property.query.get_or_404(property_id)
+
+    prop.needs_mls_review = True
+
+    if not prop.evaluation_stage or prop.evaluation_stage < 2:
+        prop.evaluation_stage = 2
+
+    db.session.commit()
+    flash("Property flagged as needing MLS review.", "info")
+    return redirect(url_for("main.property_detail", property_id=property_id))
+
 
 @main.route('/properties/new', methods=['GET','POST'])
 def property_new():
@@ -1420,122 +1493,140 @@ def enrich_attom(property_id):
     flash("ATTOM data refreshed.", "success")
     return redirect(url_for("main.property_detail", property_id=property_id))
 
-# --- AI/Heuristic comps selection ---
 @main.route("/properties/<int:property_id>/comps_ai_select", methods=["POST"])
 def comps_ai_select(property_id):
-    # Prefer AI helper if available; otherwise use a built-in heuristic
-    try:
-        from .services.ai import choose_best_comps_with_ai, score_comps_heuristic
-        have_ai = True
-    except Exception:
-        have_ai = False
-        choose_best_comps_with_ai = None
-
-        # lightweight heuristic fallback (distance, recency, sqft similarity)
-        from datetime import datetime
-        def _to_float(x):
-            try: return float(x)
-            except Exception: return None
-        def _days_ago(dstr):
-            try:
-                d = datetime.fromisoformat(str(dstr)[:10]).date()
-                return (datetime.utcnow().date() - d).days
-            except Exception:
-                return None
-        def score_comps_heuristic(subject, comps):
-            s_sqft = _to_float(subject.get("sqft"))
-            out = []
-            for c in comps:
-                dist = _to_float(c.get("distance")) or 9.9
-                days = _days_ago(c.get("saleDate")) or 9999
-                c_sqft = _to_float(c.get("sqft"))
-                sqft_pen = abs((c_sqft - s_sqft)/s_sqft) if (s_sqft and c_sqft) else 0.5
-                # smaller is better: combine with weights
-                s = (dist*2.0) + (days/90.0) + (sqft_pen*3.0)
-                out.append((s, c))
-            out.sort(key=lambda x: x[0])
-            return [c for _, c in out]
+    from .services.ai import choose_best_comps_with_ai, score_comps_heuristic
+    from math import radians, sin, cos, asin, sqrt
 
     prop = Property.query.get_or_404(property_id)
 
-    # Load raw
+    # Load raw JSON safely
     try:
-        raw = json.loads(prop.raw_json) if prop.raw_json else {}
+        raw = json.loads(prop.raw_json or "{}")
     except Exception:
         raw = {}
 
-    attx = (raw.get("attom_extract") or {})
-    candidates = attx.get("comps") or []
+    # --- helper: distance in miles (rough haversine) ---
+    def _dist_miles(lat1, lng1, lat2, lng2):
+        try:
+            lat1 = float(lat1); lng1 = float(lng1)
+            lat2 = float(lat2); lng2 = float(lng2)
+        except (TypeError, ValueError):
+            return None
+        R = 3958.8
+        dlat = radians(lat2 - lat1)
+        dlon = radians(lng2 - lng1)
+        a = sin(dlat / 2) ** 2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlon / 2) ** 2
+        c = 2 * asin((a ** 0.5))
+        return R * c
+
+    # --- helper: build comps from Zillow "nearbyHomes" if needed ---
+    def _build_comps_from_zillow(zraw, subj_lat, subj_lng):
+        comps = []
+        nearby = zraw.get("nearbyHomes") or []
+        for h in nearby:
+            addr = h.get("address") or {}
+            a1   = addr.get("streetAddress")
+            city = addr.get("city")
+            st   = addr.get("state")
+            zipc = addr.get("zipcode")
+
+            # simple address line for UI
+            parts = []
+            if a1: parts.append(a1)
+            cs = ", ".join([p for p in (city, st) if p])
+            if cs: parts.append(cs)
+            addr_line = " ".join(parts)
+            if zipc:
+                addr_line = f"{addr_line} {zipc}".strip()
+
+            lat = h.get("latitude")
+            lng = h.get("longitude")
+            dist = _dist_miles(subj_lat, subj_lng, lat, lng) if (subj_lat and subj_lng and lat and lng) else None
+
+            comps.append({
+                # location
+                "address": addr_line,
+                "address1": a1,
+                "city": city,
+                "state": st,
+                "postalcode": zipc,
+
+                # core valuation fields
+                "price": h.get("price"),
+                "sqft": h.get("livingAreaValue") or h.get("livingArea"),
+                "beds": h.get("bedrooms"),
+                "baths": h.get("bathrooms"),
+                "yearBuilt": h.get("yearBuilt"),
+
+                # comparability helpers
+                "distance": dist,
+                "saleDate": None,  # Zillow nearbyHomes here are mostly Zestimates / current values
+                "propertyType": h.get("homeType") or h.get("propertyTypeDimension"),
+                "zpid": h.get("zpid"),
+            })
+        return comps
+
+    # 1) Try to load any existing comps we already saved
+    candidates = (raw.get("comps") or
+                  raw.get("zillow_comps") or
+                  raw.get("bridge_comps") or [])
+
+    # 2) If there are none, try to auto-build from Zillow details
     if not candidates:
-        snap = (raw.get("attom") or {}).get("sale_snapshot") or {}
-        candidates = attom_svc.extract_comps(snap, max_items=100)
+        zraw = raw.get("zillow") or {}
+        subj_lat = prop.lat or zraw.get("latitude")
+        subj_lng = prop.lng or zraw.get("longitude")
 
-    # Type-aware filtering for AI candidates
-    def _canon_kind(val):
-        s = str(val or "").lower()
-        if "single" in s or "sfr" in s: return "sfr"
-        if "condo" in s: return "condo"
-        if "town"  in s: return "townhouse"
-        if "duplex" in s: return "duplex"
-        if "manufactured" in s or "mobile" in s: return "manufactured"
-        return None
+        if zraw:
+            built = _build_comps_from_zillow(zraw, subj_lat, subj_lng)
+            if built:
+                candidates = built
+                raw["comps"] = built   # <- now property_detail will see these too
 
-    def _comp_kind(c):
-        return _canon_kind(c.get("propertyType") or c.get("propclass")
-                           or c.get("proptype") or c.get("propsubtype") or c.get("propLandUse"))
+    # 3) Still nothing? Then we really don't have comps
+    if not candidates:
+        flash("No comps available from Zillow for this property yet. You may need to run a full Zillow eval or add comps manually.", "warning")
+        prop.raw_json = json.dumps(raw)
+        db.session.add(prop)
+        db.session.commit()
+        return redirect(url_for("main.property_detail", property_id=property_id))
 
-    # Subject kind from ATTOM detail if present
-    try:
-        d = ((raw.get("attom") or {}).get("detail") or {}).get("property") or []
-        subj_summary = (d[0] or {}).get("summary") if d else {}
-    except Exception:
-        subj_summary = {}
-    subject_kind = _canon_kind(
-        subj_summary.get("propertyType") or subj_summary.get("proptype")
-        or subj_summary.get("propclass") or subj_summary.get("propLandUse")
-    )
-
-    if subject_kind:
-        candidates = [c for c in candidates if (_comp_kind(c) in (None, subject_kind))]
-
-
+    # Subject snapshot from your Property model
     subj = {
-        "address": prop.full_address or prop.address,
-        "beds": prop.beds,
-        "baths": prop.baths,
-        "sqft": prop.sqft,
+        "address":   prop.full_address or prop.address,
+        "beds":      prop.beds,
+        "baths":     prop.baths,
+        "sqft":      prop.sqft,
         "yearBuilt": prop.year_built,
-        "lat": prop.lat, "lng": prop.lng,
+        "lat":       prop.lat,
+        "lng":       prop.lng,
     }
 
+    # top K comps
     try:
         top_k = int(request.form.get("k") or 6)
     except Exception:
         top_k = 6
 
     picked, notes = [], ""
-    if have_ai and choose_best_comps_with_ai:
-        try:
-            picked, notes = choose_best_comps_with_ai(subj, candidates, k=top_k)
-        except Exception as e:
-            current_app.logger.exception("AI comps selection failed")
-            notes = f"AI selection failed: {e}. Falling back to heuristic."
-
-    if not picked:
+    try:
+        picked, notes = choose_best_comps_with_ai(subj, candidates, k=top_k)
+    except Exception as e:
+        current_app.logger.exception("AI comps selection failed; falling back to heuristic")
         picked = score_comps_heuristic(subj, candidates)[:top_k]
-        if not notes:
-            notes = "Heuristic selection."
+        notes = f"AI selection failed: {e}. Heuristic selection applied."
 
-    attx["comps_selected"] = picked
-    attx["comps_selected_notes"] = notes
-    raw["attom_extract"] = attx
+    # Persist AI-selected comps & notes at TOP LEVEL (what property_detail expects)
+    raw["comps_selected"] = picked
+    raw["comps_selected_notes"] = notes
 
     prop.raw_json = json.dumps(raw)
     db.session.add(prop)
     db.session.commit()
 
     flash(f"Selected {len(picked)} comps.", "success")
-    current_app.logger.info("comps_ai_select: relative-imports OK")
+    current_app.logger.info("comps_ai_select completed")
     return redirect(url_for("main.property_detail", property_id=property_id))
 
 # --- Save manual edits (and locks) ---
@@ -1608,6 +1699,134 @@ def property_update(property_id):
 
     flash("Saved changes and locks.", "success")
     return redirect(url_for("main.property_detail", property_id=prop.id))
+
+@main.route("/properties/<int:property_id>/mls_comps", methods=["GET", "POST"])
+def mls_comps(property_id):
+    prop = Property.query.get_or_404(property_id)
+
+    # Load existing raw_json
+    try:
+        raw = json.loads(prop.raw_json or "{}")
+    except Exception:
+        raw = {}
+
+    mls_comps = raw.get("mls_comps") or []
+
+    if request.method == "POST":
+        # Grab one comp from the form
+        addr = request.form.get("comp_address") or ""
+        price = request.form.get("sale_price") or ""
+        sale_date = request.form.get("sale_date") or ""
+        sqft = request.form.get("sqft") or ""
+        beds = request.form.get("beds") or ""
+        baths = request.form.get("baths") or ""
+        year_built = request.form.get("year_built") or ""
+        lot_size = request.form.get("lot_size") or ""
+        distance = request.form.get("distance") or ""
+        condition_notes = request.form.get("condition_notes") or ""
+        photo_url = request.form.get("photo_url") or ""
+        source = request.form.get("mls_source") or "PropStream"
+
+        if not addr or not price or not sale_date:
+            flash("Comp address, sale price, and sale date are required.", "warning")
+        else:
+            comp = {
+                "address": addr,
+                "price": float(price) if price else None,
+                "saleDate": sale_date,
+                "sqft": float(sqft) if sqft else None,
+                "beds": int(beds) if beds else None,
+                "baths": float(baths) if baths else None,
+                "yearBuilt": int(year_built) if year_built else None,
+                "lotSize": float(lot_size) if lot_size else None,
+                "distance": float(distance) if distance else None,
+                "conditionNotes": condition_notes,
+                "photoUrl": photo_url,
+                "source": source,
+            }
+            mls_comps.append(comp)
+            raw["mls_comps"] = mls_comps
+            # this is now ready for Stage 3 once VA is done
+            prop.raw_json = json.dumps(raw)
+            db.session.add(prop)
+            db.session.commit()
+            flash("MLS comp added.", "success")
+            return redirect(url_for("main.mls_comps", property_id=property_id))
+
+    return render_template(
+        "mls_comps.html",
+        prop=prop,
+        mls_comps=mls_comps,
+    )
+
+@main.route("/properties/<int:property_id>/mls_comps_finalize", methods=["POST"])
+def mls_comps_finalize(property_id):
+    from .services.ai import choose_best_comps_with_ai, score_comps_heuristic
+    from datetime import datetime
+
+    prop = Property.query.get_or_404(property_id)
+
+    try:
+        raw = json.loads(prop.raw_json or "{}")
+    except Exception:
+        raw = {}
+
+    mls_comps = raw.get("mls_comps") or []
+    if not mls_comps:
+        flash("No MLS comps entered yet.", "warning")
+        return redirect(url_for("main.mls_comps", property_id=property_id))
+
+    subj = {
+        "address":   prop.full_address or prop.address,
+        "beds":      prop.beds,
+        "baths":     prop.baths,
+        "sqft":      prop.sqft,
+        "yearBuilt": prop.year_built,
+        "lat":       prop.lat,
+        "lng":       prop.lng,
+    }
+
+    # top_k from form or default 6
+    try:
+        top_k = int(request.form.get("k") or 6)
+    except Exception:
+        top_k = 6
+
+    picked, notes = [], ""
+    try:
+        picked, notes = choose_best_comps_with_ai(subj, mls_comps, k=top_k)
+    except Exception as e:
+        current_app.logger.exception("AI MLS comps selection failed; falling back to heuristic")
+        picked = score_comps_heuristic(subj, mls_comps)[:top_k]
+        notes = f"AI MLS selection failed: {e}. Heuristic selection applied."
+
+    # Save AI-selected comps and mark Stage 3
+    raw["comps_selected"] = picked
+    raw["comps_selected_notes"] = notes
+    raw["comps_source"] = "mls"
+
+    # pipeline state
+    prop.evaluation_stage = 3
+    prop.needs_mls_review = False
+    prop.mls_review_completed = datetime.utcnow()
+    prop.raw_json = json.dumps(raw)
+
+    db.session.add(prop)
+    db.session.commit()
+
+    flash(f"Selected {len(picked)} MLS comps and updated ARV stage.", "success")
+    return redirect(url_for("main.property_detail", property_id=property_id))
+
+@main.route("/va/needs_mls_review")
+def va_needs_mls_review():
+    # You can tweak this filter however you want
+    props = (
+        Property.query
+        .filter_by(needs_mls_review=True)
+        .order_by(Property.id.desc())
+        .all()
+    )
+    return render_template("va_needs_mls_review.html", properties=props)
 
 
 

@@ -2,10 +2,6 @@
 {% import "_macros.html" as ui %}
 {% block title %}Property {{ prop.id }}{% endblock %}
 
-
-
-
-
 {% block content %}
 
 <div class="d-flex align-items-center justify-content-between mb-3">
@@ -22,6 +18,7 @@
     <a class="btn btn-outline-light" href="{{ url_for('main.leads_list', q=(property.address or '')) }}">Back to Leads</a>
   </div>
 </div>
+
 {# ---------- snapshot/raw helpers ---------- #}
 {% set snap      = snapshot or {} %}
 {% set meta      = snap.get('meta', {}) %}
@@ -44,13 +41,11 @@
   {% endif %}
 </div>
 
-
 {# ---------- raw payloads from DB ---------- #}
 {% set raw_all   = raw or {} %}
 {% set raw_z     = raw_all.get('zillow', {}) %}
 {% set raw_m     = raw_all.get('melissa', {}) %}
 {% set locks     = raw_all.get('locks') or {} %}
-{% set saved_rules = raw_all.get('comp_rules') or {} %}
 {% set ux        = raw_all.get('user_overrides') or {} %}
 
 {# ---------- Melissa convenience: first LookupProperty record ---------- #}
@@ -143,22 +138,55 @@
   {% endif %}
 {% endif %}
 
+{# ---------- first photo (prefer Zillow raw.home) ---------- #}
+{% set zraw = raw_z.get('raw', {}) %}
+{% set home_node = (zraw.get('home') or zraw or {}) %}
 
-{# ---------- first photo (prefer Zillow/raw) ---------- #}
-{% set rawd = details.get('raw', {}) %}
-{% set first_photo = rawd.get('imgSrc') or rawd.get('primaryImageUrl') or rawd.get('imageUrl') %}
+{# 1) Direct image fields #}
+{% set first_photo =
+    home_node.get('imgSrc')
+    or home_node.get('hiResImageLink')
+    or home_node.get('primaryImageUrl')
+    or home_node.get('imageUrl')
+%}
+
+{# 2) Arrays: photos / responsivePhotos / images / media.photos #}
 {% if not first_photo %}
-  {% set photos = rawd.get('photos') or rawd.get('images') or (rawd.get('media', {}) if rawd else {}).get('photos') or [] %}
+  {% set photos =
+      home_node.get('photos')
+      or home_node.get('responsivePhotos')
+      or home_node.get('images')
+      or home_node.get('media', {}).get('photos')
+      or [] %}
   {% if photos %}
     {% if photos[0] is string %}
       {% set first_photo = photos[0] %}
     {% elif photos[0] is mapping %}
-      {% set first_photo = photos[0].get('url') or photos[0].get('href')
-                            or (photos[0].get('mixedSources', {}) if photos[0] else {}).get('largest')
-                            or photos[0].get('urlXL') or photos[0].get('urlLarge') %}
+      {% set first_photo =
+        photos[0].get('mixedSources', {}).get('largest')
+        or photos[0].get('url')
+        or photos[0].get('href')
+        or photos[0].get('highResUrl')
+        or photos[0].get('mediumResUrl')
+        or photos[0].get('thumbnail')
+      %}
     {% endif %}
   {% endif %}
 {% endif %}
+
+{# 3) Last resort: snapshot.details.raw (older saved format) #}
+{% if not first_photo %}
+  {% set rawd = details.get('raw', {}) %}
+  {% set home2 = rawd.get('home', rawd) %}
+  {% set first_photo =
+    home2.get('imgSrc')
+    or home2.get('primaryImageUrl')
+    or home2.get('imageUrl')
+  %}
+{% endif %}
+
+
+
 
 {# ---------- lot size display ---------- #}
 {% set lot_disp = details.get('lotSizeDisplay')
@@ -324,41 +352,91 @@
 
   <!-- Hero: Photo + Map -->
   <div class="row mb-3">
-    <div class="col-lg-7 mb-3 mb-lg-0">
-      <div class="card h-100">
-        <div class="card-header">Property Photo</div>
-        <div class="card-body p-0">
-          {% if first_photo %}
-            <img src="{{ first_photo }}" alt="Property Photo" class="img-fluid w-100" style="object-fit:cover; max-height:420px;">
-          {% elif GOOGLE_MAPS_API_KEY and lat and lng %}
-            <img src="https://maps.googleapis.com/maps/api/streetview?size=1200x420&location={{ lat }},{{ lng }}&key={{ GOOGLE_MAPS_API_KEY }}"
-                 alt="Street View" class="img-fluid w-100" style="object-fit:cover; max-height:420px;">
-          {% else %}
-            <div class="p-4 text-muted">No photo available.</div>
-          {% endif %}
-        </div>
-      </div>
-    </div>
 
-    <div class="col-lg-5">
-      <div class="card h-100">
-        <div class="card-header">Map</div>
-        <div class="card-body p-0">
-          {% if GOOGLE_MAPS_API_KEY and lat and lng %}
-            <iframe width="100%" height="420" frameborder="0" style="border:0"
-                    src="https://www.google.com/maps/embed/v1/view?key={{ GOOGLE_MAPS_API_KEY }}&center={{ lat }},{{ lng }}&zoom=16&maptype=roadmap"
-                    allowfullscreen></iframe>
-          {% elif GOOGLE_MAPS_API_KEY %}
-            <iframe width="100%" height="420" frameborder="0" style="border:0"
-                    src="https://www.google.com/maps/embed/v1/place?key={{ GOOGLE_MAPS_API_KEY }}&q={{ (fulladdr | replace(' ', '+')) }}"
-                    allowfullscreen></iframe>
-          {% else %}
-            <div class="p-4 text-muted">Map unavailable (missing Google Maps API key).</div>
-          {% endif %}
-        </div>
+<!-- Property Photo -->
+<div class="col-lg-7 mb-3 mb-lg-0">
+  <div class="card h-100">
+    <div class="card-header">Property Photo</div>
+    <div class="card-body p-0">
+
+      {# STEP 1: start with zillow's first photo #}
+      {% set photo = first_photo %}
+
+      {# STEP 2: Reject Zillow fallback satellite images #}
+      {% if photo and 'maps.googleapis.com/maps/api/staticmap' in photo %}
+        {% set photo = None %}
+      {% endif %}
+
+      {# STEP 3: Normalize Zillow paths if present #}
+      {% if photo %}
+        {% set img_src = photo %}
+        {% if img_src.startswith('//') %}
+          {% set img_src = 'https:' ~ img_src %}
+        {% elif img_src.startswith('/fp/') 
+               or img_src.startswith('/p_') 
+               or img_src.startswith('/house') %}
+          {% set img_src = 'https://photos.zillowstatic.com' ~ img_src %}
+        {% elif not img_src.startswith('http') %}
+          {% set img_src = 'https://photos.zillowstatic.com/' ~ img_src %}
+        {% endif %}
+      {% endif %}
+
+      {# STEP 4: If Zillow photo is valid, show it #}
+      {% if img_src %}
+        <img src="{{ img_src }}" 
+             class="img-fluid w-100"
+             style="object-fit:cover; max-height:420px;"
+             alt="Property Photo">
+
+      {# STEP 5: Otherwise show Google Street View #}
+      {% elif GOOGLE_MAPS_API_KEY and lat and lng %}
+        <img src="https://maps.googleapis.com/maps/api/streetview?size=1200x420&location={{ lat }},{{ lng }}&key={{ GOOGLE_MAPS_API_KEY }}"
+             class="img-fluid w-100"
+             style="object-fit:cover; max-height:420px;"
+             alt="Street View">
+
+      {# STEP 6: Last fallback #}
+      {% else %}
+        <div class="p-4 text-muted">No photo available.</div>
+      {% endif %}
+
+    </div>
+  </div>
+</div>
+
+
+  <!-- Right: Map (keep as-is) -->
+  <div class="col-lg-5">
+    <div class="card h-100">
+      <div class="card-header">Map</div>
+      <div class="card-body p-0">
+        {% if GOOGLE_MAPS_API_KEY and lat and lng %}
+          <iframe
+            width="100%"
+            height="420"
+            frameborder="0"
+            style="border:0"
+            src="https://www.google.com/maps/embed/v1/view?key={{ GOOGLE_MAPS_API_KEY }}&center={{ lat }},{{ lng }}&zoom=16&maptype=roadmap"
+            allowfullscreen>
+          </iframe>
+        {% elif GOOGLE_MAPS_API_KEY %}
+          <iframe
+            width="100%"
+            height="420"
+            frameborder="0"
+            style="border:0"
+            src="https://www.google.com/maps/embed/v1/place?key={{ GOOGLE_MAPS_API_KEY }}&q={{ (fulladdr | replace(' ', '+')) }}"
+            allowfullscreen>
+          </iframe>
+        {% else %}
+          <div class="p-4 text-muted">Map unavailable (missing Google Maps API key).</div>
+        {% endif %}
       </div>
     </div>
   </div>
+
+</div>
+
 
   {# ---------- Edit / Overrides (NO LOCKS, NO LAT/LNG) ---------- #}
   <div class="card mb-3">
@@ -516,26 +594,27 @@
         <div class="col-md-6"><strong>AssessorLastSaleDate</strong> (M): {{ sale_last_date or "—" }}</div>
         <div class="col-md-6"><strong>AssessorLastSaleAmount</strong> (M): {{ sale_last_amt | currency if sale_last_amt is not none else "—" }}</div>
       </div>
-    <hr class="my-2">
-    <div class="row g-2">
-      <div class="col-md-6">
-        <strong>Zillow Status</strong>:
-        {% if z_for_sale %}
-          <span class="badge bg-warning text-dark">For Sale</span>
-          {% if z_list %} <span class="ms-1">{{ z_list | currency }}</span>{% endif %}
-        {% elif z_status %}
-          <span class="badge bg-light text-muted">{{ z_status }}</span>
-        {% else %}
-          <span class="text-muted">—</span>
-        {% endif %}
-      </div>
-      <div class="col-md-6">
-        <strong>Zillow Link</strong>:
-        {% if z_url %}
-          <a href="{{ z_url }}" target="_blank" rel="noopener">Open on Zillow</a>
-        {% else %}
-          <span class="text-muted">—</span>
-        {% endif %}
+      <hr class="my-2">
+      <div class="row g-2">
+        <div class="col-md-6">
+          <strong>Zillow Status</strong>:
+          {% if z_for_sale %}
+            <span class="badge bg-warning text-dark">For Sale</span>
+            {% if z_list %} <span class="ms-1">{{ z_list | currency }}</span>{% endif %}
+          {% elif z_status %}
+            <span class="badge bg-light text-muted">{{ z_status }}</span>
+          {% else %}
+            <span class="text-muted">—</span>
+          {% endif %}
+        </div>
+        <div class="col-md-6">
+          <strong>Zillow Link</strong>:
+          {% if z_url %}
+            <a href="{{ z_url }}" target="_blank" rel="noopener">Open on Zillow</a>
+          {% else %}
+            <span class="text-muted">—</span>
+          {% endif %}
+        </div>
       </div>
     </div>
   </div>
@@ -566,6 +645,29 @@
       </div>
     </div>
   </div>
+
+<div class="mt-3">
+  <a href="{{ url_for('main.mls_comps', property_id=property.id) }}"
+     class="btn btn-outline-primary btn-sm">
+    Add MLS Comps (VA)
+  </a>
+
+  {% if property.needs_mls_review %}
+    <span class="badge bg-warning text-dark ms-2">Needs MLS Review</span>
+  {% elif property.evaluation_stage == 3 %}
+    <span class="badge bg-success ms-2">MLS ARV Complete</span>
+  {% else %}
+    <form method="POST"
+          action="{{ url_for('main.mark_needs_mls_review', property_id=property.id) }}"
+          class="d-inline ms-2">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="btn btn-sm btn-outline-warning">
+        Mark as Needs MLS Review
+      </button>
+    </form>
+  {% endif %}
+</div>
+
 
   {# ---- AI ARV CARD ---- #}
   {% if arv_pack and arv_pack.arv is not none %}
@@ -614,59 +716,19 @@
     <div class="col-md-3"><strong>Estimated ARV</strong> (C): {{ est_arv | currency if est_arv is not none else "—" }}</div>
   </div>
 
-  {# ---------- Comps Rules ---------- #}
+  {# ---------- AI-select comps trigger (still useful) ---------- #}
   <form method="POST" action="{{ url_for('main.comps_ai_select', property_id=prop.id) }}" class="d-inline">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="hidden" name="k" value="6">
     <button class="btn btn-sm btn-success" type="submit">AI pick best comps</button>
   </form>
 
-  <div class="card my-3">
-    <div class="card-header">Comps Rules</div>
-    <form method="POST" action="{{ url_for('main.save_comp_rules', property_id=prop.id) }}" class="card-body">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <div class="row g-2">
-        <div class="col-md-2">
-          <label class="form-label">Months ≤</label>
-          <input class="form-control form-control-sm" name="max_months" type="number" min="1" value="{{ saved_rules.get('max_months', 6) }}">
-        </div>
-        <div class="col-md-2">
-          <label class="form-label">Radius (mi) ≤</label>
-          <input class="form-control form-control-sm" name="radius" type="number" step="0.1" min="0.1" value="{{ saved_rules.get('radius', 0.5) }}">
-        </div>
-        <div class="col-md-2">
-          <label class="form-label">Sqft ± (%)</label>
-          <input class="form-control form-control-sm" name="sqft_tolerance" type="number" step="1" min="1" max="100" value="{{ (saved_rules.get('sqft_tolerance', 0.15) * 100) | round(0, 'floor') }}">
-        </div>
-        <div class="col-md-2">
-          <label class="form-label">Year ±</label>
-          <input class="form-control form-control-sm" name="year_tolerance" type="number" step="1" min="0" value="{{ saved_rules.get('year_tolerance', 5) }}">
-        </div>
-        <div class="col-md-3 d-flex align-items-end">
-          <div class="form-check">
-            <input class="form-check-input" type="checkbox" name="require_subdivision" id="require_subdivision" {% if saved_rules.get('require_subdivision', False) %}checked{% endif %}>
-            <label class="form-check-label" for="require_subdivision">Require same subdivision</label>
-          </div>
-        </div>
-      </div>
-      <div class="mt-3 d-flex gap-2">
-        <button class="btn btn-sm btn-outline-primary" type="submit">Save</button>
-        <button class="btn btn-sm btn-primary" name="refresh_after" value="1" type="submit">Save & Refresh Comps</button>
-      </div>
-    </form>
-  </div>
-
-  {# ---------- Comps (filtered) ---------- #}
+  {# ---------- Comps (just show them, no rule UI) ---------- #}
   {% set comps = comps_list or [] %}
-  {% set r_months = saved_rules.get('max_months', 6) %}
-  {% set r_radius = saved_rules.get('radius', 0.5) %}
-  {% set r_sqft   = (saved_rules.get('sqft_tolerance', 0.15) * 100) %}
-  {% set r_years  = saved_rules.get('year_tolerance', 5) %}
-  {% set r_subd   = saved_rules.get('require_subdivision', False) %}
 
-  <div class="card mb-4">
+  <div class="card mb-4 mt-3">
     <div class="card-header d-flex justify-content-between align-items-center">
-      <span>Comps (≤ {{ r_months }}mo, ≤ {{ r_radius }}mi, ± {{ r_sqft|round(0) }}% sqft, ± {{ r_years }}yr{% if r_subd %}, same subdivision{% endif %})</span>
+      <span>Comps</span>
       <span class="badge bg-light text-muted">{{ comps|length }} matches</span>
     </div>
     <div class="card-body p-0">
@@ -718,12 +780,8 @@
             {% endfor %}
           </tbody>
         </table>
-        <div class="p-2 text-muted small">
-          Rules: ≤ {{ r_months }} mo, ≤ {{ r_radius }} mi, ± {{ r_sqft|round(0) }}% sqft, ± {{ r_years }} yr{% if r_subd %}, same subdivision{% endif %}.
-          Adjust above and click <em>Save & Refresh Comps</em> to widen/tighten.
-        </div>
       {% else %}
-        <div class="p-3 text-muted">No comps matched the rules. Adjust the “Comps Rules” above and try “Save & Refresh Comps”.</div>
+        <div class="p-3 text-muted">No comps available.</div>
       {% endif %}
     </div>
   </div>

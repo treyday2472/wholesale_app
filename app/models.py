@@ -1,9 +1,18 @@
 from . import db
 from datetime import datetime
 from enum import Enum
+from sqlalchemy import Boolean, Integer, DateTime
 
 
 class Property(db.Model):
+
+        # AI pipeline state
+    evaluation_stage = db.Column(db.Integer, default=1)  # 1=Zillow, 2=Zillow+Melissa, 3=MLS
+    motivation_score = db.Column(db.Integer, nullable=True)
+
+    needs_mls_review = db.Column(db.Boolean, default=False)
+    mls_review_completed = db.Column(db.DateTime, nullable=True)
+    
     id = db.Column(db.Integer, primary_key=True)
 
     # address
@@ -30,6 +39,7 @@ class Property(db.Model):
     raw_json       = db.Column(db.Text)        # stash raw API responses if you want
 
     created_at     = db.Column(db.DateTime, default=datetime.utcnow)
+    
 
 class Lead(db.Model):
 
