@@ -15,12 +15,15 @@ from .services.ai import suggest_arv
 
 
 
+
 import re as regex
 
 from werkzeug.utils import secure_filename
 from wtforms.validators import Optional  # relaxing validators after 3 tries
 
 from .services.auto_offer import auto_enrich_and_offer_for_lead
+
+
 
 from . import db
 from .models import Lead, Buyer, Property
@@ -34,8 +37,11 @@ from .forms import (
 from .services.zillow_client import (
     zillow_basics,
     evaluate_address_with_marketdata, ZillowError,
-    search_address_for_zpid, property_details_by_zpid, normalize_details
+    search_address_for_zpid, property_details_by_zpid, normalize_details, get_comps_for_zpid
 )
+
+from .services.valuation import build_subject_and_comps
+
 
 # Melissa (on-demand enrich)
 from .services.melissa_client import (
@@ -60,6 +66,20 @@ def _log(raw: dict, *, source: str, event: str, status, note: str = None, meta: 
     })
 
 main = Blueprint('main', __name__)
+property_bp = Blueprint("properties", __name__)
+
+def _property_full_address(prop: Property) -> str:
+    """
+    Helper to build a single-line address for Zillow.
+    Adjust field names to your model.
+    """
+    parts = [
+        getattr(prop, "address_line1", "") or "",
+        getattr(prop, "city", "") or "",
+        getattr(prop, "state", "") or "",
+        getattr(prop, "zip", "") or "",
+    ]
+    return " ".join(p for p in parts if p).strip()
 
 def _update_pipeline_for_motivation(prop: Property, motivation_score: int):
     prop.motivation_score = motivation_score
@@ -85,7 +105,53 @@ def _update_pipeline_for_motivation(prop: Property, motivation_score: int):
     db.session.commit()
 
 
+def build_subject_and_comps(prop) -> dict:
+    # build address
+    parts = [
+        getattr(prop, "address_line1", "") or "",
+        getattr(prop, "city", "") or "",
+        getattr(prop, "state", "") or "",
+        getattr(prop, "zip", "") or "",
+    ]
+    full_address = " ".join(p for p in parts if p).strip()
 
+    subject = zillow_basics(full_address)
+    zpid = subject.get("zpid")
+
+    # --- MLS-selected comps (if any) ---
+    try:
+        raw = json.loads(prop.raw_json or "{}")
+    except Exception:
+        raw = {}
+
+    mls_selected = raw.get("comps_selected") or []
+
+    # --- Zillow comps fallback ---
+    zillow_comps = get_comps_for_zpid(zpid) if zpid else []
+
+    # Prefer MLS-selected; otherwise use Zillow
+    comps = mls_selected or zillow_comps
+
+    arv = subject.get("zestimate")
+
+    if comps:
+        prices: list[float] = []
+        for c in comps:
+            p = (c.get("price") or c.get("sale_price") or c.get("list_price") 
+                 or c.get("zestimate"))
+            if p:
+                try:
+                    prices.append(float(p))
+                except Exception:
+                    pass
+        if prices:
+            arv = sum(prices) / len(prices)
+
+    return {
+        "subject": subject,
+        "comps": comps,
+        "arv": arv,
+    }
 
 def _zillow_url_from_address(a1=None, city=None, state=None, postal=None):
     """
@@ -955,9 +1021,8 @@ def enrich_property_melissa(property_id):
     try:
         raw = json.loads(prop.raw_json) if prop.raw_json else {}
     except Exception:
-        raw = {}
-        prop.raw_json["zillow"]
-        
+        raw = {}  # just reset to empty dict; don't index prop.raw_json
+
     raw.setdefault("melissa", {})
     raw["melissa"]["LookupProperty"] = prop_payload
     if deeds_payload is not None:
@@ -998,500 +1063,6 @@ def learn_seller_financing():
 def lead_form_alias():
     return redirect(url_for('main.lead_new_step1'))
 
-@main.route("/comps", methods=["GET"])
-def api_comps():
-    a1    = request.values.get("address1") or request.values.get("address")
-    city  = request.values.get("city")
-    state = request.values.get("state")
-    postal= request.values.get("postalcode") or request.values.get("zip")
-    lat   = request.values.get("latitude")
-    lon   = request.values.get("longitude")
-
-    def _to_float(v):
-        try: return float(v)
-        except (TypeError, ValueError): return None
-
-    # tighter defaults for comps
-    try:
-        radius = float(request.values.get("radius", 0.5) or 0.5)
-    except (TypeError, ValueError):
-        radius = 0.5
-
-    lat_f, lon_f = _to_float(lat), _to_float(lon)
-
-    try:
-        if lat_f is not None and lon_f is not None:
-            payload = attom_svc.sale_comps(
-                lat=lat_f, lon=lon_f, radius_miles=radius,
-                page_size=50, last_n_months=6
-            )
-        else:
-            payload = attom_svc.sale_comps(
-                address1=a1, city=city, state=state, postalcode=postal,
-                radius_miles=radius, page_size=50, last_n_months=6
-            )
-
-        comps = attom_svc.extract_comps(payload, max_items=50)
-
-        # Optional subject constraints from query
-        subj_sqft = _to_float(request.values.get("subject_sqft"))
-        try:
-            subj_year = int(request.values.get("subject_year")) if request.values.get("subject_year") else None
-        except Exception:
-            subj_year = None
-        subj_sub  = request.values.get("subject_subdivision") or None
-
-        good = attom_svc.filter_comps_rules(
-            comps,
-            subject_sqft=subj_sqft,
-            subject_year=subj_year,
-            subject_subdivision=subj_sub,
-            max_months=6,
-            max_radius_miles=0.5,
-            sqft_tolerance=0.15,
-            year_tolerance=5,
-            require_subdivision=bool(subj_sub)  # require if provided
-        )
-
-        return jsonify({"status": "ok", "comps": good})
-    except Exception as e:
-        return jsonify({"status": "error", "error": str(e)}), 400
-
-@main.route("/properties/<int:property_id>/comps_rules", methods=["POST"], endpoint="save_comp_rules")
-def save_comp_rules(property_id: int):
-    """Persist comp-rule settings posted from the UI, then refresh comps."""
-    prop = Property.query.get_or_404(property_id)
-
-    def _to_float(v):
-        try: return float(v) if v not in (None, "") else None
-        except Exception: return None
-
-    def _to_int(v):
-        try: return int(float(v)) if v not in (None, "") else None
-        except Exception: return None
-
-    def _to_bool(v):
-        if v is None: return False
-        s = str(v).strip().lower()
-        return s not in ("", "0", "false", "no", "off", "none")
-
-    # ---- read form values ----
-    # allow either "radius" or "max_radius_miles"
-    radius_in = request.form.get("radius") or request.form.get("max_radius_miles")
-    radius = _to_float(radius_in)
-
-    max_months     = _to_int(request.form.get("max_months"))
-
-    # UI sends a PERCENT (e.g., 15 for ±15%)
-    pct = _to_float(request.form.get("sqft_tolerance_pct"))
-    if pct is None:
-        pct = _to_float(request.form.get("sqft_tolerance"))
-    sqft_tolerance = (pct / 100.0) if pct is not None else None
-
-    year_tolerance     = _to_int(request.form.get("year_tolerance"))
-    require_subdivision= _to_bool(request.form.get("require_subdivision"))
-
-    # ---- sane caps ----
-    if radius is not None:
-        radius = max(0.1, min(5.0, radius))
-    if sqft_tolerance is not None:
-        sqft_tolerance = max(0.01, min(1.0, sqft_tolerance))  # fraction, not percent
-    if max_months is not None:
-        max_months = max(1, min(36, max_months))
-    if year_tolerance is not None:
-        year_tolerance = max(0, min(50, year_tolerance))
-
-    # optional subject overrides
-    subject_sqft = _to_int(request.form.get("subject_sqft"))
-    subject_year = _to_int(request.form.get("subject_year"))
-    subject_sub  = (request.form.get("subject_subdivision") or "").strip() or None
-
-    # save to raw
-    try:
-        raw = json.loads(prop.raw_json) if prop.raw_json else {}
-    except Exception:
-        raw = {}
-
-    rules = {
-        "radius": radius,
-        "max_months": max_months,
-        "sqft_tolerance": sqft_tolerance,  # fraction (0.15 = ±15%)
-        "year_tolerance": year_tolerance,
-        "require_subdivision": require_subdivision,
-        "subject_sqft": subject_sqft,
-        "subject_year": subject_year,
-        "subject_subdivision": subject_sub,
-        "updated_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
-    }
-    raw["comp_rules"] = rules
-    prop.raw_json = json.dumps(raw)
-    db.session.add(prop)
-    db.session.commit()
-
-    # redirect into ATTOM refresh (GET)
-    q = {}
-    if radius is not None:         q["radius"] = radius
-    if max_months is not None:     q["max_months"] = max_months
-    if sqft_tolerance is not None: q["sqft_tolerance"] = sqft_tolerance
-    if year_tolerance is not None: q["year_tolerance"] = year_tolerance
-    if require_subdivision:        q["require_subdivision"] = "1"
-    if subject_sqft is not None:   q["subject_sqft"] = subject_sqft
-    if subject_year is not None:   q["subject_year"] = subject_year
-    if subject_sub:                q["subject_subdivision"] = subject_sub
-
-    flash("Comp rules saved.", "success")
-    return redirect(url_for("main.enrich_attom", property_id=prop.id, **q))
-
-
-@main.route("/properties/<int:property_id>/enrich_attom", methods=["GET", "POST"])
-def enrich_attom(property_id):
-    prop = Property.query.get_or_404(property_id)
-
-    # Key check
-    try:
-        _ = attom_svc._key()
-    except Exception:
-        flash("ATTOM_API_KEY not configured. Set it in .env or app config.", "warning")
-        return redirect(url_for("main.property_detail", property_id=prop.id))
-
-    # Load raw container
-    try:
-        raw = json.loads(prop.raw_json) if prop.raw_json else {}
-    except Exception:
-        raw = {}
-
-    # -------- FIX: build & clean the address --------
-    raw_addr = (prop.full_address or prop.address or "").strip()
-    raw_addr = regex.sub(r"\s*,?\s*(USA|United States)$", "", raw_addr, flags=regex.I)
-
-    a1, city, state, postal = _split_us_address(raw_addr)
-
-        # Saved rules (with fallbacks)
-    rules = (raw.get("comp_rules") or {})
-    def _to_float(v):
-        try: return float(v)
-        except Exception: return None
-    def _to_int(v):
-        try: return int(float(v))
-        except Exception: return None
-
-    # Percent in UI; store fraction internally
-    sqft_tol = rules.get("sqft_tolerance")
-    if sqft_tol is None:
-        sqft_tol = 0.15
-    # Cap to [0.01, 1.0] (1.0 == ±100%)
-    sqft_tol = max(0.01, min(1.0, float(sqft_tol)))
-
-    max_months = _to_int(rules.get("max_months")) or 6
-    max_months = max(1, min(36, max_months))
-
-    radius = _to_float(rules.get("radius"))
-    if radius is None:
-        radius = 0.5
-    # Huge radii cause timeouts; cap to something reasonable
-    radius = max(0.1, min(5.0, radius))
-
-    year_tol = _to_int(rules.get("year_tolerance")) or 5
-    year_tol = max(0, min(50, year_tol))
-
-    require_subdivision = bool(rules.get("require_subdivision"))
-
-
-
-    # 1) Property detail (get coords + rich facts)
-    try:
-        detail_payload = attom_svc.property_detail(address1=a1, city=city, state=state, postalcode=postal)
-    except Exception as e:
-        detail_payload = {"_error": str(e)}
-
-    # Try to harvest coords & basics from detail
-    lat, lon = attom_svc.extract_detail_coords(detail_payload)
-    basics   = attom_svc.extract_detail_basics(detail_payload) if isinstance(detail_payload, dict) else {}
-
-    # Subject info for rules
-    def _to_float(v):
-        try: return float(v)
-        except Exception: return None
-    def _to_int(v):
-        try: return int(v)
-        except Exception: return None
-
-    subject_sqft = _to_float(basics.get("sqft")) or _to_float(prop.sqft)
-    subject_year = _to_int(basics.get("yearBuilt")) or _to_int(prop.year_built)
-
-    subject_sub = None
-    try:
-        subject_sub = (((raw.get("melissa") or {}).get("LookupProperty") or {})
-                        .get("Records") or [])[0].get("Legal", {}).get("Subdivision")
-    except Exception:
-        pass
-
-    # 2) AVM + Rental AVM (ADDRESS ONLY)
-    try:
-        avm_payload = attom_svc.avm(address1=a1, city=city, state=state, postalcode=postal)
-    except Exception as e:
-        avm_payload = {"_error": str(e)}
-
-    try:
-        rent_payload = attom_svc.rental_avm(address1=a1, city=city, state=state, postalcode=postal)
-    except Exception as e:
-        rent_payload = {"_error": str(e)}
-
-    # Determine the subject property kind so we compare apples to apples
-    subject_kind = None
-    try:
-        m_records = (((raw.get("melissa") or {}).get("LookupProperty") or {}).get("Records") or [])
-        if m_records:
-            pu = (m_records[0].get("PropertyUseInfo") or {})
-            subject_kind = pu.get("PropertyUseGroup") or pu.get("PropertyUse") or None
-    except Exception:
-        pass
-    if not subject_kind:
-        try:
-            _summ = (((detail_payload or {}).get("property") or [{}])[0].get("summary") or {})
-            subject_kind = _summ.get("propLandUse") or _summ.get("propertyType") or _summ.get("propclass")
-        except Exception:
-            pass
-
-    # 3) Comps — prefer coords; RETRY with smaller search on failure/timeouts
-    def _fetch_comps(r, m):
-        if lat not in (None, "", "null") and lon not in (None, "", "null"):
-            return attom_svc.sale_comps(lat=float(lat), lon=float(lon),
-                                        radius_miles=r, page_size=50, last_n_months=m)
-        return attom_svc.sale_comps(address1=a1, city=city, state=state, postalcode=postal,
-                                    radius_miles=r, page_size=50, last_n_months=m)
-
-    try:
-        comps_payload = _fetch_comps(radius, max_months)
-        # If ATTOM responds but with no properties, consider retrying once
-        if not isinstance(comps_payload, dict) or not (comps_payload.get("property") or []):
-            raise RuntimeError("empty comps")
-    except Exception as e1:
-        current_app.logger.warning("ATTOM sale_comps failed (%s). Retrying smaller...", e1)
-        try:
-            comps_payload = _fetch_comps(min(1.0, radius), min(12, max_months))
-        except Exception as e2:
-            comps_payload = {"_error": str(e2), "property": []}
-
-    # ---- Backfill price / sale date / type from raw payload ----
-        # ---- Extract comps & backfill price/date/type ----
-    comps = attom_svc.extract_comps(comps_payload, max_items=50)
-
-    def _addr_key(line):
-        return regex.sub(r"\s+", " ", (line or "").strip().lower())
-
-    def _key_from_fields(a1, city, st, zipc):
-        parts = []
-        if a1: parts.append(a1)
-        if city or st: parts.append(", ".join([p for p in [city, st] if p]))
-        if zipc: parts.append(zipc)
-        return _addr_key(" ".join(parts))
-
-    raw_index = {}
-    for p in (comps_payload.get("property") or []):
-        addr = p.get("address") or {}
-        line = (addr.get("oneLine")
-                or f"{addr.get('line1') or ''}, {addr.get('locality') or ''}, {addr.get('countrySubd') or ''} {addr.get('postal1') or addr.get('postalcode') or ''}")
-        sale = (p.get("sale") or {})
-        amt  = (sale.get("amount") or {})
-        summary = p.get("summary") or {}
-        raw_index[_addr_key(line)] = {
-            "price": amt.get("saleamt"),
-            "saleDate": sale.get("saleTransDate") or amt.get("salerecdate") or sale.get("salesearchdate"),
-            "ptype": (summary.get("propertyType") or summary.get("proptype")
-                      or summary.get("propclass") or summary.get("propLandUse")),
-        }
-
-    def _addr_key_for_comp(c):
-        loc = (c.get("location") or {}).get("address", {}) if isinstance(c, dict) else {}
-        a1c  = c.get("address1") or c.get("address") or loc.get("line")
-        cc   = c.get("city") or loc.get("city")
-        st   = c.get("state") or loc.get("state")
-        zipc = c.get("postalcode") or c.get("postalCode") or loc.get("postalCode")
-        return _key_from_fields(a1c, cc, st, zipc)
-
-    for c in comps:
-        if c.get("price") in (None, "", "—"):
-            info = raw_index.get(_addr_key_for_comp(c)) or {}
-            price = ((c.get("sale") or {}).get("amount") or {}).get("saleamt") \
-                    or (c.get("amount") or {}).get("saleamt") \
-                    or c.get("saleamt") or c.get("lastSalePrice") \
-                    or info.get("price")
-            try:
-                if price is not None:
-                    c["price"] = float(price)
-            except Exception:
-                pass
-        if not c.get("saleDate"):
-            info = raw_index.get(_addr_key_for_comp(c)) or {}
-            if info.get("saleDate"):
-                c["saleDate"] = info["saleDate"]
-        if not any(k in c for k in ("propertyType","propclass","proptype","propLandUse")):
-            info = raw_index.get(_addr_key_for_comp(c)) or {}
-            if info.get("ptype"):
-                c["propertyType"] = info["ptype"]
-
-    def _hav_miles(lat1, lon1, lat2, lon2):
-        R = 3958.7613  # earth radius (mi)
-        φ1, φ2 = radians(lat1), radians(lat2)
-        dφ = radians(lat2 - lat1)
-        dλ = radians(lon2 - lon1)
-        a = sin(dφ/2)**2 + cos(φ1) * cos(φ2) * sin(dλ/2)**2
-        return 2 * R * asin(sqrt(a))
-
-    def _clatlon(c):
-        loc = (c.get("location") or {})
-        # try several common shapes
-        latc = (c.get("lat") or c.get("latitude") or loc.get("lat") or loc.get("latitude"))
-        lonc = (c.get("lng") or c.get("lon") or c.get("longitude") or loc.get("lng") or loc.get("lon") or loc.get("longitude"))
-        try:
-            return float(latc), float(lonc)
-        except Exception:
-            return None, None
-
-    try:
-        slat = float(lat) if lat not in (None, "", "null") else None
-        slon = float(lon) if lon not in (None, "", "null") else None
-    except Exception:
-        slat = slon = None
-
-    if slat is not None and slon is not None:
-        for c in comps:  # 'comps' is the list from extract_comps(...)
-            if c.get("distance") in (None, "", 0):
-                clat, clon = _clatlon(c)
-                if clat is not None and clon is not None:
-                    c["distance"] = round(_hav_miles(slat, slon, clat, clon), 3)
-
-    # also accept 'mi' from an AI scorer as a fallback name
-    for c in comps:
-        if c.get("distance") in (None, "", 0) and c.get("mi") not in (None, "", 0):
-            try:
-                c["distance"] = float(c["mi"])
-            except Exception:
-                pass
-
-    # ---- type-normalization & filter by subject kind ----
-    def _canon_kind(val):
-        s = str(val or "").lower()
-        if "single" in s or "sfr" in s: return "sfr"
-        if "condo" in s: return "condo"
-        if "town"  in s: return "townhouse"
-        if "duplex" in s: return "duplex"
-        if "manufactured" in s or "mobile" in s: return "manufactured"
-        return None
-
-    subj_summary = {}
-    try:
-        subj_summary = ((detail_payload or {}).get("property") or [{}])[0].get("summary") or {}
-    except Exception:
-        pass
-    subject_kind = _canon_kind(
-        basics.get("propertyType") or basics.get("proptype") or basics.get("propclass")
-        or basics.get("propLandUse") or subj_summary.get("propertyType")
-        or subj_summary.get("proptype") or subj_summary.get("propclass") or subj_summary.get("propLandUse")
-    )
-
-    def _comp_kind(c):
-        return _canon_kind(c.get("propertyType") or c.get("propclass")
-                           or c.get("proptype") or c.get("propsubtype") or c.get("propLandUse"))
-
-    if subject_kind:
-        comps = [c for c in comps if (_comp_kind(c) in (None, subject_kind))]
-
-    # ---- apply numeric/date/radius rules (use your saved rule values) ----
-    good_comps = attom_svc.filter_comps_rules(
-    comps,
-    subject_sqft=subject_sqft,
-    subject_year=subject_year,
-    subject_subdivision=subject_sub,
-    max_months=max_months,
-    max_radius_miles=radius,
-    sqft_tolerance=sqft_tol,
-    year_tolerance=year_tol,
-    require_subdivision=require_subdivision,
-)
-
-    # 4) Schools (address-only)
-    try:
-        schools_payload = attom_svc.detail_with_schools(address1=a1, city=city, state=state, postalcode=postal)
-    except Exception as e:
-        schools_payload = {"_error": str(e)}
-
-    # ----- Activity log entries (ATTOM) -----
-    if isinstance(detail_payload, dict):
-        _log(raw, source="ATTOM", event="property_detail",
-             status=(detail_payload.get("status", {}) or {}).get("code", "ok"),
-             note="property/detail", meta={"has_property": bool((detail_payload or {}).get("property"))})
-    if isinstance(avm_payload, dict):
-        status_code = (avm_payload.get("status") or {}).get("code", "ok")
-        try:
-            avm_val = (((avm_payload.get("property") or [])[0].get("avm") or {}).get("amount") or {}).get("value")
-        except Exception:
-            avm_val = None
-        _log(raw, source="ATTOM", event="avm", status=status_code,
-             note=(f"avm value={avm_val}" if avm_val is not None else "avm"))
-    if isinstance(rent_payload, dict):
-        _log(raw, source="ATTOM", event="rental_avm",
-             status=(rent_payload.get("status") or {}).get("code", "ok"),
-             note="valuation/rentalavm")
-    if isinstance(comps_payload, dict):
-        code = (comps_payload.get("status") or {}).get("code", "ok")
-        n    = len(comps_payload.get("property", []))
-        _log(raw, source="ATTOM", event="sale_snapshot", status=code,
-             note=f"{n} raw comps", meta={"radius": radius})
-    if isinstance(schools_payload, dict):
-        _log(raw, source="ATTOM", event="detail_with_schools",
-             status=(schools_payload.get("status") or {}).get("code", "ok"),
-             note="property/detailwithschools")
-
-    # ----- Save raw (preserve previous snapshot on failure) -----
-    raw.setdefault("attom", {})
-    prev_snapshot = (raw.get("attom") or {}).get("sale_snapshot")
-
-    raw["attom"] = {
-        "detail": detail_payload,
-        "avm": avm_payload,
-        "rental_avm": rent_payload,
-        "sale_snapshot": (
-            comps_payload
-            if (isinstance(comps_payload, dict) and (comps_payload.get("property") or []))
-            else (prev_snapshot or comps_payload)
-        ),
-        "detail_with_schools": schools_payload,
-        "as_of": datetime.utcnow().strftime("%Y-%m-%d"),
-    }
-
-
-
-    # Light extracts for UI (store FILTERED comps)
-    v, lo, hi, avm_asof, conf = attom_svc.extract_avm_numbers(avm_payload)
-    rv, rlo, rhi, r_asof = attom_svc.extract_rental_avm_numbers(rent_payload)
-    raw["attom_extract"] = {
-        "avm": {"value": v, "low": lo, "high": hi, "as_of": avm_asof, "confidence": conf},
-        "rental_avm": {"value": rv, "low": rlo, "high": rhi, "as_of": r_asof},
-        "comps": good_comps,
-        "schools": attom_svc.extract_schools(schools_payload, max_items=5),
-    }
-
-    # Promote basics into Property if blank
-    if basics:
-        prop.full_address = basics.get("fullAddress") or prop.full_address
-        if not prop.beds and basics.get("beds"):            prop.beds = basics["beds"]
-        if not prop.baths and basics.get("baths"):          prop.baths = basics["baths"]
-        if not prop.sqft and basics.get("sqft"):            prop.sqft = basics["sqft"]
-        if not prop.year_built and basics.get("yearBuilt"): prop.year_built = basics["yearBuilt"]
-        if not prop.lat and basics.get("lat"):
-            try: prop.lat = float(basics["lat"])
-            except Exception: pass
-        if not prop.lng and basics.get("lng"):
-            try: prop.lng = float(basics["lng"])
-            except Exception: pass
-
-    prop.raw_json = json.dumps(raw)
-    db.session.add(prop)
-    db.session.commit()
-    flash("ATTOM data refreshed.", "success")
-    return redirect(url_for("main.property_detail", property_id=property_id))
 
 @main.route("/properties/<int:property_id>/comps_ai_select", methods=["POST"])
 def comps_ai_select(property_id):
@@ -1700,11 +1271,11 @@ def property_update(property_id):
     flash("Saved changes and locks.", "success")
     return redirect(url_for("main.property_detail", property_id=prop.id))
 
-@main.route("/properties/<int:property_id>/mls_comps", methods=["GET", "POST"])
-def mls_comps(property_id):
+@main.route("/properties/<int:property_id>/comps", methods=["GET", "POST"])
+def property_comps(property_id):
     prop = Property.query.get_or_404(property_id)
 
-    # Load existing raw_json
+    # ----- MLS comps (VA-entered) -----
     try:
         raw = json.loads(prop.raw_json or "{}")
     except Exception:
@@ -1746,17 +1317,24 @@ def mls_comps(property_id):
             }
             mls_comps.append(comp)
             raw["mls_comps"] = mls_comps
-            # this is now ready for Stage 3 once VA is done
             prop.raw_json = json.dumps(raw)
             db.session.add(prop)
             db.session.commit()
             flash("MLS comp added.", "success")
-            return redirect(url_for("main.mls_comps", property_id=property_id))
+            return redirect(url_for("main.property_comps", property_id=property_id))
+
+    # ----- Zillow subject + comps -----
+    full_address = _property_full_address(prop)
+    subject = zillow_basics(full_address)
+    zpid = subject.get("zpid")
+    zillow_comps = get_comps_for_zpid(zpid) if zpid else []
 
     return render_template(
-        "mls_comps.html",
+        "mls_comps.html",   # reuse your existing template
         prop=prop,
         mls_comps=mls_comps,
+        subject=subject,
+        comps=zillow_comps,
     )
 
 @main.route("/properties/<int:property_id>/mls_comps_finalize", methods=["POST"])
@@ -1774,7 +1352,7 @@ def mls_comps_finalize(property_id):
     mls_comps = raw.get("mls_comps") or []
     if not mls_comps:
         flash("No MLS comps entered yet.", "warning")
-        return redirect(url_for("main.mls_comps", property_id=property_id))
+        return redirect(url_for("main.property_comps", property_id=property_id))
 
     subj = {
         "address":   prop.full_address or prop.address,
@@ -1827,8 +1405,3 @@ def va_needs_mls_review():
         .all()
     )
     return render_template("va_needs_mls_review.html", properties=props)
-
-
-
-
-

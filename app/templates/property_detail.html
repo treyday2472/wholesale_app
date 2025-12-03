@@ -4,6 +4,8 @@
 
 {% block content %}
 
+
+
 <div class="d-flex align-items-center justify-content-between mb-3">
   <div>
     <h2 class="mb-0">{{ property.full_address or property.address or 'Property' }}</h2>
@@ -647,7 +649,7 @@
   </div>
 
 <div class="mt-3">
-  <a href="{{ url_for('main.mls_comps', property_id=property.id) }}"
+  <a href="{{ url_for('main.property_comps', property_id=property.id) }}"
      class="btn btn-outline-primary btn-sm">
     Add MLS Comps (VA)
   </a>
@@ -847,5 +849,10 @@
     </div>
   {% endif %}
 </div>
+
+<a href="{{ url_for('main.property_comps', property_id=property.id) }}"
+   class="btn btn-sm btn-outline-secondary">
+  View Zillow Comps (AI)
+</a>
 
 {% endblock %}

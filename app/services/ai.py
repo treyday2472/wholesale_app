@@ -383,3 +383,31 @@ def suggest_arv(subject: Dict, comps: List[Dict], k: int = 6, avm: Optional[Dict
 
     blended_pack.setdefault("why", "Local weighted-median $/sf; softly blended toward available AVMs.")
     return blended_pack, f"{local_note} (OpenAI call failed → heuristic ARV. {type(last_err).__name__}: {last_err})"
+
+def select_comps_for_arv(prop, raw):
+    """
+    Decide which comps to use based on evaluation_stage and available data.
+    Stage 3 prefers MLS comps if present.
+    """
+    stage = getattr(prop, "evaluation_stage", 1) or 1
+
+    mls_comps = raw.get("mls_comps") or []
+    ai_selected = raw.get("comps_selected") or []
+    zillow_comps = raw.get("comps") or raw.get("zillow_comps") or []
+    bridge_comps = raw.get("bridge_comps") or []
+
+    # Stage 3: MLS first
+    if stage >= 3 and mls_comps:
+        base = mls_comps
+    # Stage 2: AI-selected or Zillow+bridge
+    elif stage == 2 and (ai_selected or zillow_comps or bridge_comps):
+        base = ai_selected or zillow_comps or bridge_comps
+    # Stage 1: whatever Zillow gave us
+    else:
+        base = zillow_comps or bridge_comps or mls_comps
+
+    return base
+
+def suggest_arv_for_property(prop, raw, avm_bundle):
+    comps = select_comps_for_arv(prop, raw)
+    return suggest_arv(comps_list=comps, avm_bundle=avm_bundle)

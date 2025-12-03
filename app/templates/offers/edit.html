@@ -2,8 +2,6 @@
 {% import "_macros.html" as ui %}
 {% block title %}Offer {{ offer.id }}{% endblock %}
 
-
-
 {% block content %}
 
 <div class="d-flex align-items-center justify-content-between mb-3">
@@ -32,16 +30,21 @@
   </div>
 </div>
 
-
 <div class="container my-4">
   <div class="d-flex justify-content-between align-items-center mb-3">
     <h3 class="mb-0">Offer #{{ offer.id }}</h3>
     <div class="d-flex gap-2">
       {% if offer.property_id %}
-        <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('main.property_detail', property_id=offer.property_id) }}">View Property</a>
+        <a class="btn btn-sm btn-outline-secondary"
+           href="{{ url_for('main.property_detail', property_id=offer.property_id) }}">
+          View Property
+        </a>
       {% endif %}
       {% if offer.contact_id %}
-        <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('contacts.view_contact', contact_id=offer.contact_id) }}">View Contact</a>
+        <a class="btn btn-sm btn-outline-secondary"
+           href="{{ url_for('contacts.view_contact', contact_id=offer.contact_id) }}">
+          View Contact
+        </a>
       {% endif %}
     </div>
   </div>
@@ -50,83 +53,224 @@
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
     <div class="row g-3">
-      <!-- Deal meta -->
+      {# -------------------- PROPERTY + DEAL (LEFT CARD) -------------------- #}
       <div class="col-lg-4">
         <div class="card h-100">
-          <div class="card-header">Deal</div>
+          <div class="card-header">Property & Deal</div>
           <div class="card-body">
-            <div class="mb-2">
-              <label class="form-label">Deal kind</label>
-              <select class="form-select form-select-sm" name="deal_kind" id="deal_kind">
-                <option value="" {{ 'selected' if not offer.deal_kind else '' }}>—</option>
-                <option value="Flip" {{ 'selected' if offer.deal_kind=='Flip' else '' }}>Flip</option>
-                <option value="Rental" {{ 'selected' if offer.deal_kind=='Rental' else '' }}>Rental</option>
-              </select>
-            </div>
-            <div class="mb-2">
-              <label class="form-label">Deal type</label>
-              <div class="d-flex flex-wrap gap-2">
-                {% for t in DealType %}
-                <label class="btn btn-sm {{ 'btn-primary' if offer.deal_type==t else 'btn-outline-primary' }}">
-                  <input class="d-none" type="radio" name="deal_type" value="{{ t.value }}" {{ 'checked' if offer.deal_type==t else '' }}>
-                  {{ t.value }}
-                </label>
-                {% endfor %}
-              </div>
-            </div>
+            <div class="row g-3">
+              {# ---------- LEFT: READ-ONLY PROPERTY SECTION ---------- #}
+              <div class="col-5 border-end">
+                {% set p = prop or offer.prop %}
+                {% if p %}
+                  {% set base_arv = (
+                    p.ai_arv if p.ai_arv is not none
+                    else (p.arv_estimate if p.arv_estimate is not none else (p.zestimate if p.zestimate is not none else None))
+                  ) %}
+                  {% set base_rent = (
+                    p.ai_rent_est if p.ai_rent_est is not none
+                    else (p.market_rent_est if p.market_rent_est is not none else (p.rent_zestimate if p.rent_zestimate is not none else None))
+                  ) %}
+                {% else %}
+                  {% set base_arv = None %}
+                  {% set base_rent = None %}
+                {% endif %}
 
-            <div class="row g-2">
-              <div class="col-6">
-                <label class="form-label">ARV</label>
-                <input class="form-control form-control-sm money" name="arv" id="arv" value="{{ offer.arv or '' }}">
+                <h6 class="text-muted text-uppercase mb-2">Property</h6>
+                <div class="small">
+                  <div class="mb-1">
+                    <strong>Address:</strong><br>
+                    {% if p %}
+                      {{ p.full_address or p.address or ('Property #' ~ p.id) }}
+                    {% else %}
+                      —
+                    {% endif %}
+                  </div>
+                  <div class="mb-1">
+                    <strong>Beds/Baths:</strong><br>
+                    {% if p %}
+                      {{ p.beds or '—' }} / {{ p.baths or '—' }}
+                    {% else %}
+                      — / —
+                    {% endif %}
+                  </div>
+                  <div class="mb-1">
+                    <strong>Sq Ft / Year:</strong><br>
+                    {% if p %}
+                      {{ p.sqft or '—' }} / {{ p.year_built or '—' }}
+                    {% else %}
+                      — / —
+                    {% endif %}
+                  </div>
+                  <div class="mb-1">
+                    <strong>School Dist:</strong><br>
+                    {% if p %}
+                      {{ p.school_district or '—' }}
+                    {% else %}
+                      —
+                    {% endif %}
+                  </div>
+                  <div class="mb-1">
+                    <strong>AI ARV / Zestimate:</strong><br>
+                    {% if base_arv %}
+                      ${{ "{:,.0f}".format(base_arv) }}
+                    {% else %}
+                      —
+                    {% endif %}
+                  </div>
+                  <div class="mb-1">
+                    <strong>Rent Estimate:</strong><br>
+                    {% if base_rent %}
+                      ${{ "{:,.0f}".format(base_rent) }}
+                    {% else %}
+                      —
+                    {% endif %}
+                  </div>
+                </div>
               </div>
-              <div class="col-6">
-                <label class="form-label">Estimated Market Rent</label>
-                <input class="form-control form-control-sm money" name="market_rent_est" id="market_rent_est" value="{{ offer.market_rent_est or '' }}">
-              </div>
-            </div>
 
-            <div class="mt-2">
-              <label class="form-label">Condition (1–10)</label>
-              <input class="form-control form-control-sm" name="condition_1_10" id="condition" type="number" min="1" max="10" value="{{ offer.condition_1_10 or '' }}">
-              <div class="small text-muted mt-1">
-                Real value = ARV × (1 − 0.045 × (10 − condition))<br>
-                Repairs (auto) = ARV − Real value
+              {# ---------- RIGHT: EDITABLE DEAL SECTION ---------- #}
+              <div class="col-7">
+                <div class="mb-2">
+                  <label class="form-label">Deal kind</label>
+                  <select class="form-select form-select-sm" name="deal_kind" id="deal_kind">
+                    <option value="" {{ 'selected' if not offer.deal_kind else '' }}>—</option>
+                    <option value="Flip"   {{ 'selected' if offer.deal_kind=='Flip'   else '' }}>Flip</option>
+                    <option value="Rental" {{ 'selected' if offer.deal_kind=='Rental' else '' }}>Rental</option>
+                  </select>
+                </div>
+
+                <div class="mb-2">
+                  <label class="form-label">Deal type</label>
+                  <div class="d-flex flex-wrap gap-2">
+                    {% for t in DealType %}
+                    <label class="btn btn-sm {{ 'btn-primary' if offer.deal_type==t else 'btn-outline-primary' }}">
+                      <input class="d-none"
+                             type="radio"
+                             name="deal_type"
+                             value="{{ t.value }}"
+                             {{ 'checked' if offer.deal_type==t else '' }}>
+                      {{ t.value }}
+                    </label>
+                    {% endfor %}
+                  </div>
+                </div>
+
+                {# ARV / Rent defaults: offer overrides property AI/zestimate #}
+                {% set arv_value = (
+                  offer.arv
+                  or base_arv
+                ) %}
+                {% set rent_value = (
+                  offer.market_rent_est
+                  or base_rent
+                ) %}
+
+                <div class="row g-2">
+                  <div class="col-6">
+                    <label class="form-label">ARV</label>
+                    <input
+                      class="form-control form-control-sm money"
+                      name="arv"
+                      id="arv"
+                      value="{{ arv_value or '' }}">
+                  </div>
+                  <div class="col-6">
+                    <label class="form-label">Estimated Market Rent</label>
+                    <input
+                      class="form-control form-control-sm money"
+                      name="market_rent_est"
+                      id="market_rent_est"
+                      value="{{ rent_value or '' }}">
+                  </div>
+                </div>
+
+                {# Condition defaults: offer -> lead -> 7 if property only #}
+                {% set cond_value = (
+                  offer.condition_1_10
+                  or (lead.condition_1_10 if lead and lead.condition_1_10 is not none else None)
+                  or (7 if p and not lead else None)
+                ) %}
+
+                <div class="mt-2">
+                  <label class="form-label">Condition (1–10)</label>
+                  <input
+                    class="form-control form-control-sm"
+                    name="condition_1_10"
+                    id="condition"
+                    type="number"
+                    min="1"
+                    max="10"
+                    value="{{ cond_value or '' }}">
+                  <div class="small text-muted mt-1">
+                    Real value = ARV × (1 − 0.045 × (10 − condition))<br>
+                    Repairs (auto) = ARV − Real value
+                  </div>
+                </div>
               </div>
-            </div>
+            </div> <!-- /row -->
           </div>
         </div>
       </div>
 
-      <!-- Mortgage & PITI -->
+      {# -------------------- MORTGAGE & PITI -------------------- #}
       <div class="col-lg-4">
         <div class="card h-100">
           <div class="card-header">Mortgage & PITI</div>
           <div class="card-body">
             <div class="form-check mb-2">
-              <input class="form-check-input" type="checkbox" name="has_mortgage" id="has_mortgage" {{ 'checked' if offer.has_mortgage else '' }}>
+              <input class="form-check-input"
+                     type="checkbox"
+                     name="has_mortgage"
+                     id="has_mortgage"
+                     {% if offer.has_mortgage %}checked{% endif %}>
               <label class="form-check-label" for="has_mortgage">There is an existing mortgage</label>
             </div>
             <div class="row g-2">
               <div class="col-6">
                 <label class="form-label">Mortgage Balance</label>
-                <input class="form-control form-control-sm money" name="mortgage_balance" id="mortgage_balance" value="{{ offer.mortgage_balance or '' }}">
+                <input
+                  class="form-control form-control-sm money"
+                  name="mortgage_balance"
+                  id="mortgage_balance"
+                  value="{{ offer.mortgage_balance
+                           or (lead.mortgage_balance if lead and lead.mortgage_balance is not none else '') }}">
               </div>
               <div class="col-6">
                 <label class="form-label">Mortgage Payment (mo)</label>
-                <input class="form-control form-control-sm money" name="mortgage_payment" id="mortgage_payment" value="{{ offer.mortgage_payment or '' }}">
+                <input
+                  class="form-control form-control-sm money"
+                  name="mortgage_payment"
+                  id="mortgage_payment"
+                  value="{{ offer.mortgage_payment
+                           or (lead.mortgage_payment if lead and lead.mortgage_payment is not none else '') }}">
               </div>
               <div class="col-4">
                 <label class="form-label">Rate %</label>
-                <input class="form-control form-control-sm" name="interest_rate" id="interest_rate" value="{{ offer.interest_rate or '' }}">
+                <input
+                  class="form-control form-control-sm"
+                  name="interest_rate"
+                  id="interest_rate"
+                  value="{{ offer.interest_rate
+                           or (lead.interest_rate if lead and lead.interest_rate is not none else '') }}">
               </div>
               <div class="col-4">
                 <label class="form-label">Taxes (mo)</label>
-                <input class="form-control form-control-sm money" name="monthly_taxes" id="monthly_taxes" value="{{ offer.monthly_taxes or '' }}">
+                <input
+                  class="form-control form-control-sm money"
+                  name="monthly_taxes"
+                  id="monthly_taxes"
+                  value="{{ offer.monthly_taxes
+                           or (lead.monthly_taxes if lead and lead.monthly_taxes is not none else '') }}">
               </div>
               <div class="col-4">
                 <label class="form-label">Insurance (mo)</label>
-                <input class="form-control form-control-sm money" name="monthly_insurance" id="monthly_insurance" value="{{ offer.monthly_insurance or '' }}">
+                <input
+                  class="form-control form-control-sm money"
+                  name="monthly_insurance"
+                  id="monthly_insurance"
+                  value="{{ offer.monthly_insurance
+                           or (lead.monthly_insurance if lead and lead.monthly_insurance is not none else '') }}">
               </div>
               <div class="col-12">
                 <div class="alert alert-light border mt-2 mb-0">
@@ -137,25 +281,43 @@
 
             <div class="mt-2">
               <label class="form-label">Reinstatement Amount</label>
-              <input class="form-control form-control-sm money" name="reinstatement_amount" id="reinstatement_amount" value="{{ offer.reinstatement_amount or '' }}">
+              <input
+                class="form-control form-control-sm money"
+                name="reinstatement_amount"
+                id="reinstatement_amount"
+                value="{{ offer.reinstatement_amount
+                         or (lead.reinstatement_amount if lead and lead.reinstatement_amount is not none else '') }}">
             </div>
           </div>
         </div>
       </div>
 
-      <!-- Pricing / Offers -->
+      {# -------------------- PRICING & OFFERS -------------------- #}
       <div class="col-lg-4">
         <div class="card h-100">
-          <div class="card-header">Pricing & Offers</div>
+          <div class="card-header d-flex justify-content-between align-items-center">
+            <span>Pricing & Offers</span>
+            <button type="button" class="btn btn-sm btn-outline-light" id="recalc_btn">
+              Recalculate
+            </button>
+          </div>
           <div class="card-body">
             <div class="row g-2">
               <div class="col-6">
                 <label class="form-label">Repairs (Flip)</label>
-                <input class="form-control form-control-sm money" name="repairs_flip" id="repairs_flip" value="{{ offer.repairs_flip or '' }}">
+                <input
+                  class="form-control form-control-sm money"
+                  name="repairs_flip"
+                  id="repairs_flip"
+                  value="{{ offer.repairs_flip or '' }}">
               </div>
               <div class="col-6">
                 <label class="form-label">Repairs (Rental)</label>
-                <input class="form-control form-control-sm money" name="repairs_rental" id="repairs_rental" value="{{ offer.repairs_rental or '' }}">
+                <input
+                  class="form-control form-control-sm money"
+                  name="repairs_rental"
+                  id="repairs_rental"
+                  value="{{ offer.repairs_rental or '' }}">
               </div>
             </div>
 
@@ -164,43 +326,71 @@
             <div class="row g-2">
               <div class="col-6">
                 <label class="form-label">Investor Cash Price</label>
-                <input class="form-control form-control-sm money" name="investor_cash_price" id="investor_cash_price" value="{{ offer.investor_cash_price or '' }}">
+                <input
+                  class="form-control form-control-sm money"
+                  name="investor_cash_price"
+                  id="investor_cash_price"
+                  value="{{ offer.investor_cash_price or '' }}">
               </div>
               <div class="col-6">
                 <label class="form-label">End Buyer Sale Price (auto)</label>
-                <input class="form-control form-control-sm money" name="end_buyer_price" id="end_buyer_price" value="{{ offer.end_buyer_price or '' }}">
+                <input
+                  class="form-control form-control-sm money"
+                  name="end_buyer_price"
+                  id="end_buyer_price"
+                  value="{{ offer.end_buyer_price or '' }}">
                 <div class="small text-muted">= ARV × 0.90 − Repairs</div>
               </div>
               <div class="col-6">
                 <label class="form-label">My Cash Offer (auto)</label>
-                <input class="form-control form-control-sm money" name="my_cash_offer" id="my_cash_offer" value="{{ offer.my_cash_offer or '' }}">
+                <input
+                  class="form-control form-control-sm money"
+                  name="my_cash_offer"
+                  id="my_cash_offer"
+                  value="{{ offer.my_cash_offer or '' }}">
                 <div class="small text-muted">= ARV × 0.64 − Repairs</div>
               </div>
               <div class="col-6">
                 <label class="form-label">Investor Cash Offer (auto)</label>
-                <input class="form-control form-control-sm money" id="investor_cash_offer_auto" readonly>
+                <input
+                  class="form-control form-control-sm money"
+                  id="investor_cash_offer_auto"
+                  readonly>
                 <div class="small text-muted">= ARV × 0.70 − Repairs</div>
               </div>
               <div class="col-6">
                 <label class="form-label">Cash for Equity</label>
-                <input class="form-control form-control-sm money" name="cash_for_equity" id="cash_for_equity" value="{{ offer.cash_for_equity or '' }}">
+                <input
+                  class="form-control form-control-sm money"
+                  name="cash_for_equity"
+                  id="cash_for_equity"
+                  value="{{ offer.cash_for_equity or '' }}">
               </div>
               <div class="col-6">
                 <label class="form-label">Sales Closing Costs (auto)</label>
-                <input class="form-control form-control-sm money" id="sales_closing_costs" readonly>
+                <input
+                  class="form-control form-control-sm money"
+                  id="sales_closing_costs"
+                  readonly>
                 <div class="small text-muted">= ARV × 0.05</div>
               </div>
             </div>
 
             <div class="mt-2">
               <label class="form-label">Potential Wholesale Fee (Owner Finance)</label>
-              <input class="form-control form-control-sm money" id="wholesale_fee_of" readonly>
+              <input
+                class="form-control form-control-sm money"
+                id="wholesale_fee_of"
+                readonly>
               <div class="small text-muted">= EndBuyer − CashOffer − CashForEquity × 0.9</div>
             </div>
 
             <div class="mt-2">
               <label class="form-label">Potential Wholesale Fee (Subject To)</label>
-              <input class="form-control form-control-sm money" id="wholesale_fee_subto" readonly>
+              <input
+                class="form-control form-control-sm money"
+                id="wholesale_fee_subto"
+                readonly>
               <div class="small text-muted">= (Real FMV × 0.18) − Reinstatement − CashForEquity</div>
             </div>
           </div>
@@ -208,7 +398,29 @@
       </div>
     </div>
 
-    <!-- Notes -->
+    {# -------------------- AI DEAL OPINION -------------------- #}
+    <div class="card my-3">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span>AI Deal Opinion</span>
+        <button type="button" class="btn btn-sm btn-outline-primary" id="ai_analyze_btn">
+          Analyze Deal
+        </button>
+      </div>
+      <div class="card-body">
+        <div id="ai_opinion_status" class="small text-muted mb-2"></div>
+        <textarea
+          class="form-control"
+          rows="4"
+          name="ai_opinion"
+          id="ai_opinion"
+        >{{ offer.ai_opinion or '' }}</textarea>
+        <div class="form-text">
+          Summary of deal type, investor buy box, repair range, and suggested offer.
+        </div>
+      </div>
+    </div>
+
+    {# -------------------- NOTES -------------------- #}
     <div class="card my-3">
       <div class="card-header">Notes</div>
       <div class="card-body">
@@ -216,105 +428,118 @@
       </div>
     </div>
 
-<div class="d-flex justify-content-between align-items-center mb-3">
-  <h3 class="mb-0">Offer #{{ offer.id }}</h3>
-  <div class="d-flex gap-2">
-    {% if offer.property_id %}
-      <a class="btn btn-sm btn-outline-secondary"
-         href="{{ url_for('main.property_detail', property_id=offer.property_id) }}">
-        View Property
-      </a>
-    {% endif %}
-    {% if offer.lead_id %}
-      <a class="btn btn-sm btn-outline-secondary"
-         href="{{ url_for('main.lead_detail', lead_id=offer.lead_id) }}">
-        View Contact
-      </a>
-    {% endif %}
-  </div>
-</div>
-
-
-  <!-- Actions -->
-  <div class="row g-3 mt-4">
-    <div class="col-lg-4">
-      <div class="card h-100">
-        <div class="card-header">Generate Property Report</div>
-        <div class="card-body">
-          <form method="POST" action="{{ url_for('offers.generate_report', offer_id=offer.id) }}" class="d-inline">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <input type="hidden" name="with_seller" value="1">
-            <button class="btn btn-outline-primary btn-sm">Property Report w/ seller info</button>
-          </form>
-          <form method="POST" action="{{ url_for('offers.generate_report', offer_id=offer.id) }}" class="d-inline ms-2">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <input type="hidden" name="with_seller" value="0">
-            <button class="btn btn-outline-secondary btn-sm">Property Report w/o seller info</button>
-          </form>
-        </div>
-      </div>
-    </div>
-
-    <div class="col-lg-4">
-      <div class="card h-100">
-        <div class="card-header">Generate offer letter</div>
-        <div class="card-body">
-          <form method="POST" action="{{ url_for('offers.generate_offer_letter', offer_id=offer.id) }}" class="d-inline">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <button class="btn btn-primary btn-sm">Generate</button>
-          </form>
-          <form method="POST" action="{{ url_for('offers.send_offer_letter', offer_id=offer.id) }}" class="d-inline ms-2">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <button class="btn btn-outline-primary btn-sm">Send Offer</button>
-          </form>
-        </div>
-      </div>
-    </div>
-
-    <div class="col-lg-4">
-      <div class="card h-100">
-        <div class="card-header">Offer Status</div>
-        <div class="card-body">
-          <div class="d-flex flex-wrap gap-2">
-            {% for s in OfferStatus %}
-            <form method="POST" action="{{ url_for('offers.set_status', offer_id=offer.id) }}" class="d-inline">
+    {# -------------------- ACTIONS -------------------- #}
+    <div class="row g-3 mt-4">
+      <div class="col-lg-4">
+        <div class="card h-100">
+          <div class="card-header">Generate Property Report</div>
+          <div class="card-body">
+            <form method="POST" action="{{ url_for('offers.generate_report', offer_id=offer.id) }}" class="d-inline">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-              <input type="hidden" name="status" value="{{ s.value }}">
-              <button class="btn btn-sm {{ 'btn-dark' if offer.offer_status==s else 'btn-outline-dark' }}">{{ s.value }}</button>
+              <input type="hidden" name="with_seller" value="1">
+              <button class="btn btn-outline-primary btn-sm">Property Report w/ seller info</button>
             </form>
-            {% endfor %}
+            <form method="POST" action="{{ url_for('offers.generate_report', offer_id=offer.id) }}" class="d-inline ms-2">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="with_seller" value="0">
+              <button class="btn btn-outline-secondary btn-sm">Property Report w/o seller info</button>
+            </form>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-lg-4">
+        <div class="card h-100">
+          <div class="card-header">Generate offer letter</div>
+          <div class="card-body">
+            <form method="POST" action="{{ url_for('offers.generate_offer_letter', offer_id=offer.id) }}" class="d-inline">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button class="btn btn-primary btn-sm">Generate</button>
+            </form>
+            <form method="POST" action="{{ url_for('offers.send_offer_letter', offer_id=offer.id) }}" class="d-inline ms-2">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button class="btn btn-outline-primary btn-sm">Send Offer</button>
+            </form>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-lg-4">
+        <div class="card h-100">
+          <div class="card-header">Offer Status</div>
+          <div class="card-body">
+            <div class="d-flex flex-wrap gap-2">
+              {% for s in OfferStatus %}
+              <form method="POST" action="{{ url_for('offers.set_status', offer_id=offer.id) }}" class="d-inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="status" value="{{ s.value }}">
+                <button class="btn btn-sm {{ 'btn-dark' if offer.offer_status==s else 'btn-outline-dark' }}">
+                  {{ s.value }}
+                </button>
+              </form>
+              {% endfor %}
+            </div>
           </div>
         </div>
       </div>
     </div>
-  </div>
+  </form>
 </div>
 
-<!-- Live math -->
+{# -------------------- LIVE MATH + AI SCRIPT -------------------- #}
 <script>
-function num(v){ if(!v) return 0; return parseFloat(String(v).replace(/[$, ]/g,''))||0; }
-function fmt(n){ if(isNaN(n)) return '—'; return n.toLocaleString(undefined,{style:'currency',currency:'USD',maximumFractionDigits:0}); }
+function num(v){
+  if(!v) return 0;
+  return parseFloat(String(v).replace(/[$, ]/g,'')) || 0;
+}
+function fmt(n){
+  if(isNaN(n)) return '—';
+  return n.toLocaleString(undefined,{
+    style:'currency',
+    currency:'USD',
+    maximumFractionDigits:0
+  });
+}
 
 function recompute(){
-  const arv = num(document.getElementById('arv').value);
-  const cond = Math.min(10, Math.max(1, num(document.getElementById('condition').value)));
+  const arvEl = document.getElementById('arv');
+  const condEl = document.getElementById('condition');
+  const dealKindEl = document.getElementById('deal_kind');
+
+  if (!arvEl || !condEl) return;
+
+  const arv = num(arvEl.value);
+  const condVal = num(condEl.value) || 10;
+  const cond = Math.min(10, Math.max(1, condVal));
 
   // Real value & repairs from condition (4.5% drop per point under 10)
-  const drop = 0.045 * (10 - (cond||10));
+  const drop = 0.045 * (10 - cond);
   const realValue = arv * (1 - drop);
   const repairsAuto = Math.max(0, arv - realValue);
 
-  // Pick which repairs to apply: Flip if deal_kind=Flip, else Rental
-  const dealKind = document.getElementById('deal_kind').value;
-  const rFlip = num(document.getElementById('repairs_flip').value)||repairsAuto;
-  const rRent = num(document.getElementById('repairs_rental').value)||repairsAuto;
+  const dealKind = dealKindEl ? dealKindEl.value : '';
+
+  const repairsFlipEl = document.getElementById('repairs_flip');
+  const repairsRentalEl = document.getElementById('repairs_rental');
+
+  // If user hasn't typed anything yet, auto-fill repairs from condition
+  if (repairsFlipEl && !repairsFlipEl.value && repairsAuto) {
+    repairsFlipEl.value = fmt(repairsAuto);
+  }
+  if (repairsRentalEl && !repairsRentalEl.value && repairsAuto) {
+    repairsRentalEl.value = fmt(repairsAuto);
+  }
+
+  const rFlip = repairsFlipEl ? num(repairsFlipEl.value) : repairsAuto;
+  const rRent = repairsRentalEl ? num(repairsRentalEl.value) : repairsAuto;
   const repairs = (dealKind === 'Flip') ? rFlip : rRent;
 
   // PITI
   const piti = num(document.getElementById('mortgage_payment').value)
             + num(document.getElementById('monthly_taxes').value)
             + num(document.getElementById('monthly_insurance').value);
-  document.getElementById('piti_disp').textContent = fmt(piti);
+  const pitiDisp = document.getElementById('piti_disp');
+  if (pitiDisp) pitiDisp.textContent = fmt(piti);
 
   // Core formulas
   const endBuyer = (arv * 0.90) - repairs;
@@ -322,26 +547,258 @@ function recompute(){
   const investorCash = (arv * 0.70) - repairs;
   const closingCosts = (arv * 0.05);
 
-  document.getElementById('end_buyer_price').value = endBuyer ? fmt(endBuyer) : '';
-  document.getElementById('my_cash_offer').value   = myCash ? fmt(myCash) : '';
-  document.getElementById('investor_cash_offer_auto').value = investorCash ? fmt(investorCash) : '';
-  document.getElementById('sales_closing_costs').value = closingCosts ? fmt(closingCosts) : '';
+  const endBuyerEl = document.getElementById('end_buyer_price');
+  const myCashEl = document.getElementById('my_cash_offer');
+  const investorCashAutoEl = document.getElementById('investor_cash_offer_auto');
+  const investorCashPriceEl = document.getElementById('investor_cash_price');
+  const closingCostsEl = document.getElementById('sales_closing_costs');
+
+  if (endBuyerEl) endBuyerEl.value = endBuyer ? fmt(endBuyer) : '';
+  if (myCashEl) myCashEl.value = myCash ? fmt(myCash) : '';
+  if (investorCashAutoEl) investorCashAutoEl.value = investorCash ? fmt(investorCash) : '';
+  if (investorCashPriceEl && !investorCashPriceEl.value) {
+    // Only autofill investor_cash_price if user hasn't overridden it
+    investorCashPriceEl.value = investorCash ? fmt(investorCash) : '';
+  }
+  if (closingCostsEl) closingCostsEl.value = closingCosts ? fmt(closingCosts) : '';
 
   // Owner Finance wholesale fee
-  const cashOffer = myCash; // using “My cash offer” in the formula you gave
+  const cashOffer = myCash;
   const cfeq = num(document.getElementById('cash_for_equity').value);
   const wh_of = (endBuyer - cashOffer - (cfeq * 0.90));
-  document.getElementById('wholesale_fee_of').value = fmt(wh_of);
+  const whOfEl = document.getElementById('wholesale_fee_of');
+  if (whOfEl) whOfEl.value = fmt(wh_of);
 
   // Subject To wholesale fee
   const reinst = num(document.getElementById('reinstatement_amount').value);
   const wh_subto = ((realValue * 0.18) - reinst - cfeq);
-  document.getElementById('wholesale_fee_subto').value = fmt(wh_subto);
+  const whSubtoEl = document.getElementById('wholesale_fee_subto');
+  if (whSubtoEl) whSubtoEl.value = fmt(wh_subto);
+}
+
+async function runAiAnalysis(){
+  const statusEl = document.getElementById('ai_opinion_status');
+  const aiBox = document.getElementById('ai_opinion');
+  if (!statusEl || !aiBox) return;
+
+  statusEl.textContent = 'Thinking...';
+
+  const payload = {
+    arv: num(document.getElementById('arv').value),
+    market_rent_est: num(document.getElementById('market_rent_est').value),
+    condition: num(document.getElementById('condition').value),
+    repairs_flip: num(document.getElementById('repairs_flip').value),
+    repairs_rental: num(document.getElementById('repairs_rental').value),
+    my_cash_offer: num(document.getElementById('my_cash_offer').value),
+    investor_cash_price: num(document.getElementById('investor_cash_price').value),
+    mortgage_balance: num(document.getElementById('mortgage_balance').value),
+    mortgage_payment: num(document.getElementById('mortgage_payment').value),
+    piti: num(document.getElementById('mortgage_payment').value)
+         + num(document.getElementById('monthly_taxes').value)
+         + num(document.getElementById('monthly_insurance').value)
+  };
+
+  try {
+    const resp = await fetch("{{ url_for('offers.ai_analyze', offer_id=offer.id) }}", {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRFToken': "{{ csrf_token() }}"
+      },
+      body: JSON.stringify(payload)
+    });
+
+    if (!resp.ok) throw new Error('Bad response');
+    const data = await resp.json();
+    aiBox.value = data.text || '';
+    statusEl.textContent = 'Updated.';
+  } catch (err) {
+    console.error(err);
+    statusEl.textContent = 'Error getting AI opinion.';
+  }
 }
 
 document.addEventListener('input', (e)=>{
   if(e.target.closest('#offerForm')) recompute();
 });
-document.addEventListener('DOMContentLoaded', recompute);
+
+document.addEventListener('DOMContentLoaded', () => {
+  recompute();
+
+  const recalcBtn = document.getElementById('recalc_btn');
+  if (recalcBtn) {
+    recalcBtn.addEventListener('click', function(e){
+      e.preventDefault();
+      recompute();
+    });
+  }
+
+  const aiBtn = document.getElementById('ai_analyze_btn');
+  if (aiBtn) {
+    aiBtn.addEventListener('click', function(e){
+      e.preventDefault();
+      runAiAnalysis();
+    });
+  }
+});
 </script>
+
+<script>
+function num(v){
+  if(!v) return 0;
+  return parseFloat(String(v).replace(/[$, ]/g,'')) || 0;
+}
+function fmt(n){
+  if(isNaN(n)) return '—';
+  return n.toLocaleString(undefined,{
+    style:'currency',
+    currency:'USD',
+    maximumFractionDigits:0
+  });
+}
+
+function recompute(){
+  const arvEl = document.getElementById('arv');
+  const condEl = document.getElementById('condition');
+  const dealKindEl = document.getElementById('deal_kind');
+
+  if (!arvEl || !condEl) return;
+
+  const arv = num(arvEl.value);
+  const condVal = num(condEl.value) || 10;
+  const cond = Math.min(10, Math.max(1, condVal));
+
+  // Real value & repairs from condition (4.5% drop per point under 10)
+  const drop = 0.045 * (10 - cond);          // e.g. cond=9 => drop=0.045
+  const realValue = arv * (1 - drop);
+  const repairsAuto = Math.max(0, arv - realValue);
+
+  const dealKind = dealKindEl ? dealKindEl.value : '';
+
+  const repairsFlipEl = document.getElementById('repairs_flip');
+  const repairsRentalEl = document.getElementById('repairs_rental');
+
+  // ALWAYS tie repairs to condition/ARV so changing condition updates everything
+  if (repairsFlipEl) {
+    repairsFlipEl.value = repairsAuto ? fmt(repairsAuto) : '';
+  }
+  if (repairsRentalEl) {
+    repairsRentalEl.value = repairsAuto ? fmt(repairsAuto) : '';
+  }
+
+  const rFlip = repairsFlipEl ? num(repairsFlipEl.value) : repairsAuto;
+  const rRent = repairsRentalEl ? num(repairsRentalEl.value) : repairsAuto;
+  const repairs = (dealKind === 'Flip') ? rFlip : rRent;
+
+  // PITI
+  const piti = num(document.getElementById('mortgage_payment').value)
+            + num(document.getElementById('monthly_taxes').value)
+            + num(document.getElementById('monthly_insurance').value);
+  const pitiDisp = document.getElementById('piti_disp');
+  if (pitiDisp) pitiDisp.textContent = fmt(piti);
+
+  // Core formulas
+  const endBuyer = (arv * 0.90) - repairs;
+  const myCash   = (arv * 0.64) - repairs;
+  const investorCash = (arv * 0.70) - repairs;
+  const closingCosts = (arv * 0.05);
+
+  const endBuyerEl = document.getElementById('end_buyer_price');
+  const myCashEl = document.getElementById('my_cash_offer');
+  const investorCashAutoEl = document.getElementById('investor_cash_offer_auto');
+  const investorCashPriceEl = document.getElementById('investor_cash_price');
+  const closingCostsEl = document.getElementById('sales_closing_costs');
+
+  if (endBuyerEl) endBuyerEl.value = endBuyer ? fmt(endBuyer) : '';
+  if (myCashEl) myCashEl.value = myCash ? fmt(myCash) : '';
+  if (investorCashAutoEl) investorCashAutoEl.value = investorCash ? fmt(investorCash) : '';
+  if (investorCashPriceEl && !investorCashPriceEl.value) {
+    // Only autofill investor_cash_price if user hasn't overridden it
+    investorCashPriceEl.value = investorCash ? fmt(investorCash) : '';
+  }
+  if (closingCostsEl) closingCostsEl.value = closingCosts ? fmt(closingCosts) : '';
+
+  // Owner Finance wholesale fee
+  const cashOffer = myCash;
+  const cfeq = num(document.getElementById('cash_for_equity').value);
+  const wh_of = (endBuyer - cashOffer - (cfeq * 0.90));
+  const whOfEl = document.getElementById('wholesale_fee_of');
+  if (whOfEl) whOfEl.value = fmt(wh_of);
+
+  // Subject To wholesale fee
+  const reinst = num(document.getElementById('reinstatement_amount').value);
+  const wh_subto = ((realValue * 0.18) - reinst - cfeq);
+  const whSubtoEl = document.getElementById('wholesale_fee_subto');
+  if (whSubtoEl) whSubtoEl.value = fmt(wh_subto);
+}
+
+async function runAiAnalysis(){
+  const statusEl = document.getElementById('ai_opinion_status');
+  const aiBox = document.getElementById('ai_opinion');
+  if (!statusEl || !aiBox) return;
+
+  statusEl.textContent = 'Thinking...';
+
+  const payload = {
+    arv: num(document.getElementById('arv').value),
+    market_rent_est: num(document.getElementById('market_rent_est').value),
+    condition: num(document.getElementById('condition').value),
+    repairs_flip: num(document.getElementById('repairs_flip').value),
+    repairs_rental: num(document.getElementById('repairs_rental').value),
+    my_cash_offer: num(document.getElementById('my_cash_offer').value),
+    investor_cash_price: num(document.getElementById('investor_cash_price').value),
+    mortgage_balance: num(document.getElementById('mortgage_balance').value),
+    mortgage_payment: num(document.getElementById('mortgage_payment').value),
+    piti: num(document.getElementById('mortgage_payment').value)
+         + num(document.getElementById('monthly_taxes').value)
+         + num(document.getElementById('monthly_insurance').value)
+  };
+
+  try {
+    const resp = await fetch("{{ url_for('offers.ai_analyze', offer_id=offer.id) }}", {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRFToken': "{{ csrf_token() }}"
+      },
+      body: JSON.stringify(payload)
+    });
+
+    if (!resp.ok) throw new Error('Bad response');
+    const data = await resp.json();
+    aiBox.value = data.text || '';
+    statusEl.textContent = 'Updated.';
+  } catch (err) {
+    console.error(err);
+    statusEl.textContent = 'Error getting AI opinion.';
+  }
+}
+
+// Recompute on any input in the form
+document.addEventListener('input', (e)=>{
+  if(e.target.closest('#offerForm')) recompute();
+});
+
+// And also once on page load
+document.addEventListener('DOMContentLoaded', () => {
+  recompute();
+
+  const recalcBtn = document.getElementById('recalc_btn');
+  if (recalcBtn) {
+    recalcBtn.addEventListener('click', function(e){
+      e.preventDefault();
+      recompute();
+    });
+  }
+
+  const aiBtn = document.getElementById('ai_analyze_btn');
+  if (aiBtn) {
+    aiBtn.addEventListener('click', function(e){
+      e.preventDefault();
+      runAiAnalysis();
+    });
+  }
+});
+</script>
+
 {% endblock %}

@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h2 class="mb-3">
+  Comps for
+  {{ property.display_address or subject.get('fullAddress') or 'Property #' ~ property.id }}
+</h2>
+
+<p class="text-muted">
+  These are the Zillow comps the system/AI will use when they’re available. Read-only on purpose.
+</p>
+
+<div class="mb-3">
+  <strong>Subject ZPID:</strong> {{ subject.get("zpid") or "N/A" }}<br>
+  <strong>Zestimate:</strong>
+  {% if subject.get("zestimate") %}
+    ${{ "{:,.0f}".format(subject.get("zestimate")) }}
+  {% else %}
+    N/A
+  {% endif %}
+</div>
+
+{% if not comps %}
+  <div class="alert alert-warning">
+    No comps were found for this property. The AI will fall back to Zestimate / other logic.
+  </div>
+{% else %}
+  <div class="table-responsive">
+    <table class="table table-sm table-striped align-middle">
+      <thead>
+        <tr>
+          <th>Address</th>
+          <th>Beds</th>
+          <th>Baths</th>
+          <th>Sq Ft</th>
+          <th>List Price</th>
+          <th>Sale Price</th>
+          <th>Zestimate</th>
+          <th>Status</th>
+          <th>Sale Date</th>
+          <th>Link</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for c in comps %}
+        <tr>
+          <td>{{ c.address }}</td>
+          <td>{{ c.beds or "-" }}</td>
+          <td>{{ c.baths or "-" }}</td>
+          <td>
+            {% if c.sqft %}
+              {{ "{:,}".format(c.sqft) }}
+            {% else %}
+              -
+            {% endif %}
+          </td>
+          <td>
+            {% if c.list_price %}
+              ${{ "{:,.0f}".format(c.list_price) }}
+            {% else %}
+              -
+            {% endif %}
+          </td>
+          <td>
+            {% if c.sale_price %}
+              ${{ "{:,.0f}".format(c.sale_price) }}
+            {% else %}
+              -
+            {% endif %}
+          </td>
+          <td>
+            {% if c.zestimate %}
+              ${{ "{:,.0f}".format(c.zestimate) }}
+            {% else %}
+              -
+            {% endif %}
+          </td>
+          <td>{{ c.status or "-" }}</td>
+          <td>{{ c.sale_date or "-" }}</td>
+          <td>
+            {% if c.url %}
+              <a href="{{ c.url }}" target="_blank" class="btn btn-sm btn-outline-primary">
+                View
+              </a>
+            {% else %}
+              -
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% endif %}
+
+{% endblock %}

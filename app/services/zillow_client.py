@@ -254,6 +254,25 @@ def property_details_by_zpid(zpid: str,
     params = {"zpid": zpid}
     return _get(url, headers, params)
 
+def get_zillow_details(
+    zpid: str,
+    *,
+    api_key: Optional[str] = None,
+    host: Optional[str] = None,
+    normalize: bool = False
+) -> Dict[str, Any]:
+    """
+    Convenience helper:
+      - calls property_details_by_zpid()
+      - optionally normalizes to your standard detail schema.
+    """
+    raw = property_details_by_zpid(zpid, api_key=api_key, host=host)
+
+    if normalize:
+        return normalize_details(raw)
+
+    return raw
+
 
 # ---- Extra endpoints we need for 1–8 ----
 
@@ -641,6 +660,116 @@ def _last_sale_from_history(hist: Dict[str, Any]) -> Tuple[Optional[float], Opti
             break
     return sale_price, sale_date, method
 
+def comps_by_zpid(
+    zpid: str,
+    api_key: Optional[str] = None,
+    host: Optional[str] = None,
+    path_override: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Low-level wrapper for the Zillow/RapidAPI comps endpoint.
+    Uses PROPERTY_COMPS_PATH if set; default '/propertyComps'.
+    """
+    resolved_host = host or _p_cfg("PROPERTY_HOST")
+    headers = _headers(api_key, resolved_host)
+    base = _provider_base(resolved_host)
+    path = (path_override or _p_cfg("PROPERTY_COMPS_PATH", "/propertyComps")).strip()  # adjust if your RapidAPI path differs
+    url = f"{base}{path}"
+
+    params = {
+        "zpid": zpid,
+        "count": 10,  # tweak as needed
+    }
+    return _get(url, headers, params)
+
+
+def normalize_comps(raw: Any) -> List[Dict[str, Any]]:
+    """
+    Normalize various provider shapes into a simple comps list.
+    Each comp will have the fields the AI & UI care about:
+      zpid, address, beds, baths, sqft, list_price, sale_price,
+      zestimate, status, sale_date, url, distance
+    """
+    if isinstance(raw, dict):
+        items = (
+            raw.get("comparables")
+            or raw.get("comps")
+            or raw.get("properties")
+            or raw.get("data")
+            or raw.get("results")
+            or []
+        )
+    elif isinstance(raw, list):
+        items = raw
+    else:
+        items = []
+
+    comps: List[Dict[str, Any]] = []
+
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+
+        home = item.get("home") or item.get("property") or item
+
+        addr_candidate = pick(
+            home, "fullAddress", "address", "formattedAddress", "streetAddress"
+        )
+
+        zpid = pick(home, "zpid", "id", "resourceId")
+
+        # build a "best guess" URL if nothing provided
+        url = (
+            home.get("hdpUrl")
+            or home.get("zillowUrl")
+            or home.get("url")
+            or (f"https://www.zillow.com/homedetails/{zpid}_zpid/" if zpid else None)
+        )
+
+        comp = {
+            "zpid": zpid,
+            "address": _stringify_address(addr_candidate),
+            "beds": pick(home, "bedrooms", "beds"),
+            "baths": pick(home, "bathrooms", "baths"),
+            "sqft": pick(home, "livingArea", "livingAreaValue", "sqft", "living_area"),
+            "list_price": pick(home, "price", "unformattedPrice", "listPrice"),
+            "sale_price": pick(
+                home,
+                "salePrice",
+                "soldPrice",
+                "lastSalePrice",
+                "amount",
+            ),
+            "zestimate": home.get("zestimate"),
+            "status": pick(home, "homeStatus", "statusType", "listingStatus"),
+            "sale_date": pick(home, "soldDate", "saleDate", "date"),
+            "distance": pick(item, "distance", "distanceInMeters", "distanceInKm"),
+            "url": url,
+            "raw": item,
+        }
+
+        comps.append(comp)
+
+    return comps
+
+
+def get_comps_for_zpid(
+    zpid: str,
+    *,
+    api_key: Optional[str] = None,
+    host: Optional[str] = None,
+    normalize: bool = True,
+) -> Any:
+    """
+    Main entry point: subject zpid -> comps list.
+
+    - If normalize=True (default): returns a list of normalized comp dicts.
+    - If normalize=False: returns raw provider payload.
+    """
+    raw = comps_by_zpid(zpid, api_key=api_key, host=host)
+    return normalize_comps(raw) if normalize else raw
+
+
 
 def investor_snapshot_by_zpid(zpid: str,
                               *,
@@ -652,7 +781,6 @@ def investor_snapshot_by_zpid(zpid: str,
     addr_bits = _address_bits(raw_details)
     from .enrichers import enrich_details
     # ...
-    raw_details = property_details_by_zpid(zpid, api_key=api_key, host=host)
     details = normalize_details(raw_details)
 
     # Enrich missing bits
